@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { CoupleContext, Profile } from '@/types/database';
+import type { Couple, CoupleContext, Profile } from '@/types/database';
 
 /** 创建双人空间并写入 owner 成员（RPC 原子事务），返回 couple_id */
 export async function createCoupleWithMembership(startedAt: string): Promise<string> {
@@ -26,6 +26,26 @@ export function mapCoupleError(message: string): string {
   if (message.includes('couple_is_full')) return '这个空间已经满员了';
   if (message.includes('not_authenticated')) return '登录状态失效，请重新登录';
   return message;
+}
+
+/**
+ * 更新「在一起的日子」。
+ *
+ * 原实现只允许在创建空间时设定一次，之后无法修改，导致填错就永久将错就错。
+ * RLS 侧 `couples_update_policy` 已允许任一成员更新，此处只补业务封装。
+ */
+export async function updateRelationshipStartedAt(
+  coupleId: string,
+  startedAt: string,
+): Promise<Couple> {
+  const { data, error } = await supabase
+    .from('couples')
+    .update({ relationship_started_at: startedAt })
+    .eq('id', coupleId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
 }
 
 /**

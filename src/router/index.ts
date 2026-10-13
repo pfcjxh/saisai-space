@@ -53,6 +53,13 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/WishesView.vue'),
     meta: { title: '心愿', public: true },
   },
+  {
+    path: '/settings',
+    name: 'settings',
+    component: () => import('@/views/SettingsView.vue'),
+    // 与其他 Tab 一致开放未登录访问：未登录时进入演示态，可预览界面
+    meta: { title: '设置', public: true },
+  },
   { path: '/:pathMatch(.*)*', redirect: '/today' },
 ];
 

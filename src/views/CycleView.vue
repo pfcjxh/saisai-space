@@ -37,14 +37,15 @@ const partnerProfile = ref<Profile | null>(null);
 const timezone = computed(() => myProfile.value?.timezone ?? DEFAULT_TIMEZONE);
 
 /**
- * 男性伴侣视角：仅阶段估算 + 关怀提示，无任何打卡入口。
+ * 伴侣关怀视角：她性别为女、我为男时进入。
  *
- * 修复：原实现为 `myProfile?.gender ?? 'male'`，即资料未加载（或未登录）时
- * **默认按男方视角**。女性用户首屏会先看到「伴侣关怀模式」且 periodOwnerId
- * 短暂指向伴侣；未登录访客同理。现改为三态：
- *   已明确 female → 本人视角；已明确 male → 伴侣视角；
- *   未知（资料未加载 / 未登录）→ 按本人视角，宁可先显示自己的空状态，
- *   也不要替用户假定性别（伴侣视角还会触发「读伴侣数据」的语义）。
+ * 修复记录：原实现为 `myProfile?.gender ?? 'male'`，即资料未加载（或未登录）时
+ * **默认按男方视角**，女性用户首屏会先看到「伴侣关怀模式」且 owner 短暂指向伴侣。
+ * 现改为三态：已明确 female → 本人视角；已明确 male → 伴侣视角；未知 → 本人视角。
+ *
+ * 代录（v0011 起）：伴侣视角**不再是只读**。她两周才能用一次手机，
+ * 需要由他代为记录。RLS 已放开伴侣写入；她主动标记 private 且非他录入的
+ * 记录仍不可见，这一隐私边界保留在数据库层。
  */
 const isPartnerView = computed(() => myProfile.value?.gender === 'male');
 
@@ -55,6 +56,9 @@ const periodOwnerId = computed(() => {
   }
   return auth.user?.id ?? null;
 });
+
+/** 当前登录用户：与 periodOwnerId 不同时即为「代录」，写入时记录 recorded_by */
+const myUserId = computed(() => auth.user?.id ?? null);
 
 const {
   cycles,
@@ -72,7 +76,10 @@ const {
   logFor,
   saveLog,
   removeLog,
-} = usePeriod(periodOwnerId, isPartnerView, timezone);
+} = usePeriod(periodOwnerId, isPartnerView, timezone, myUserId);
+
+/** 是否处于代录状态（伴侣视角且有明确归属人） */
+const isProxyRecording = computed(() => isPartnerView.value && periodOwnerId.value !== null);
 
 // ---------------------------------------------------------------- 视图状态
 
@@ -173,31 +180,40 @@ onMounted(async () => {
       <!-- 核心状态卡 -->
       <PeriodStatusCard :model="model" :today="today" :partner-view="isPartnerView" />
 
-      <!-- 操作区（仅本人视角） -->
-      <div v-if="!isPartnerView" class="mt-3 flex gap-2">
-        <template v-if="ongoingCycle">
-          <AppButton class="flex-1" tone="amber" @click="endCycleToday">
-            <Droplets :size="15" />
-          </AppButton>
-          <AppButton class="flex-1" variant="secondary" @click="openLogSheet(today)">
-            <PenLine :size="15" />
-            今日打卡
-          </AppButton>
-        </template>
-        <template v-else>
-          <AppButton class="flex-1" tone="amber" @click="startCycleToday">
-            <Droplets :size="15" />
-            经期来了
-          </AppButton>
-          <AppButton class="flex-1" variant="secondary" @click="openLogSheet(today)">
-            <PenLine :size="15" />
-            今日打卡
-          </AppButton>
-          <AppButton variant="ghost" class="shrink-0" @click="openCycleCreate">
-            <Plus :size="15" />
-            补录
-          </AppButton>
-        </template>
+      <!-- 操作区：伴侣视角同样可用（代录）；未登录演示态也展示以便预览 -->
+      <div v-if="periodOwnerId || !auth.isAuthenticated" class="mt-3">
+        <p
+          v-if="isProxyRecording"
+          class="mb-2 rounded-xl bg-rose/10 px-3 py-2 text-[11px] leading-4 text-rose"
+        >
+          正在为 {{ coupleStore.context?.partner?.nickname ?? 'TA' }} 代录，记录会标注由你录入
+        </p>
+        <div class="flex gap-2">
+          <template v-if="ongoingCycle">
+            <AppButton class="flex-1" tone="amber" @click="endCycleToday">
+              <Droplets :size="15" />
+              <span class="ml-1">经期结束</span>
+            </AppButton>
+            <AppButton class="flex-1" variant="secondary" @click="openLogSheet(today)">
+              <PenLine :size="15" />
+              <span class="ml-1">今日打卡</span>
+            </AppButton>
+          </template>
+          <template v-else>
+            <AppButton class="flex-1" tone="amber" @click="startCycleToday">
+              <Droplets :size="15" />
+              <span class="ml-1">经期来了</span>
+            </AppButton>
+            <AppButton class="flex-1" variant="secondary" @click="openLogSheet(today)">
+              <PenLine :size="15" />
+              <span class="ml-1">今日打卡</span>
+            </AppButton>
+            <AppButton variant="ghost" class="shrink-0" @click="openCycleCreate">
+              <Plus :size="15" />
+              <span class="ml-1">补录</span>
+            </AppButton>
+          </template>
+        </div>
       </div>
 
       <!-- 清单 -->
@@ -207,7 +223,7 @@ onMounted(async () => {
             v-if="ongoingCycle"
             :cycle="ongoingCycle"
             :cycle-length-days="null"
-            :readonly="isPartnerView"
+            :readonly="false"
             @end="endCycleToday"
             @edit="openCycleEdit(ongoingCycle)"
             @remove="removeCycle(ongoingCycle.id)"
@@ -218,7 +234,7 @@ onMounted(async () => {
             :key="cycle.id"
             :cycle="cycle"
             :cycle-length-days="cycleLengthOf(cycle)"
-            :readonly="isPartnerView"
+            :readonly="false"
             @edit="openCycleEdit(cycle)"
             @remove="removeCycle(cycle.id)"
           />
@@ -228,7 +244,9 @@ onMounted(async () => {
             class="flex flex-col items-center gap-2 py-14 text-center"
           >
             <CharacterAvatar character="miffy" mood="caring" :size="52" />
-            <p class="text-xs text-fg-soft">还没有经期记录，从第一次打卡开始</p>
+            <p class="text-xs text-fg-soft">
+              {{ isProxyRecording ? '她还没有记录，你可以先帮她补一条' : '还没有经期记录，从第一次打卡开始' }}
+            </p>
           </div>
         </div>
       </template>
@@ -239,7 +257,7 @@ onMounted(async () => {
           :model="model"
           :logs="logs"
           :today="today"
-          :readonly="isPartnerView"
+          :readonly="false"
           @log="openLogSheet"
         />
       </div>

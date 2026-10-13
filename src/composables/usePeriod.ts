@@ -20,13 +20,17 @@ import { DEFAULT_TIMEZONE, todayInTimezone } from '@/utils/date';
  * usePeriod — 生理期模块业务逻辑层
  *
  * - periodOwnerId：数据归属人（本人视角 = 自己；伴侣关怀视角 = 伴侣）；
- * - 伴侣视角严格只读周期统计，绝不查询 period_logs；
+ * - myUserId：**当前登录用户**。与 periodOwnerId 不同时即为「代录」，
+ *   写入时记录 recorded_by 以便追溯是谁录的；
+ * - 伴侣视角可读可写（代录），但读取仍受 RLS 约束：她主动标记 private
+ *   且非伴侣录入的记录不可见；
  * - 乐观更新 + 失败回滚 + 温和提示 + Mock 兜底，与其他模块同构。
  */
 export function usePeriod(
   periodOwnerId: Ref<string | null>,
   isPartnerView: Ref<boolean>,
   timezone: Ref<string> = ref(DEFAULT_TIMEZONE),
+  myUserId: Ref<string | null> = ref(null),
 ) {
   const cycles = ref<PeriodCycle[]>([]);
   // PeriodLog.symptoms 为递归 Json 类型，深响应解包会导致 TS2589；
@@ -68,18 +72,25 @@ export function usePeriod(
         logs.value = mock.logs;
         return;
       }
-      // 网络优先 + 离线快照回退；隐私红线：伴侣视角不拉取任何打卡明细
-      const partnerView = isPartnerView.value;
+      // 网络优先 + 离线快照回退。
+      // 代录支持（v0011 起）：伴侣视角**也拉取**打卡明细 —— RLS 已放行
+      // 「她标记为 shared」或「伴侣本人录入」的记录；她主动标 private 且
+      // 非伴侣录入的内容仍在数据库层被截断，不会出现在结果里。
+      // 因此这里不再需要前端硬过滤，交给 RLS 决定可见性。
       const result = await networkFirst('cached_period_state', async () => ({
         cycles: await listRecentCycles(ownerId),
-        logs: partnerView ? [] : await listRecentLogs(ownerId),
+        logs: await listRecentLogs(ownerId),
       }));
       cycles.value = result.data.cycles;
-      // 隐私红线（修复）：快照回退路径必须**重新应用**伴侣视角过滤。
-      // 原实现直接信任 result.data.logs —— 若本机缓存里有本人时期的打卡明细，
-      // 伴侣视角命中快照时会把私密打卡渲染出来，绕过"伴侣绝不查询 period_logs"
-      // 的设计。这里不信任任何来源的数据，一律按当前视角裁决。
-      logs.value = partnerView ? [] : result.data.logs;
+      // 快照回退路径仍需过滤：本机缓存可能是「本人时期」写入的，
+      // 换到伴侣视角后不应把当时缓存下来的 private 明细渲染出来。
+      // 本人视角无需过滤（RLS 已保证只返回自己的数据）。
+      logs.value =
+        isPartnerView.value && result.fromCache
+          ? result.data.logs.filter(
+              (l) => l.visibility === 'shared' || l.recorded_by === myUserId.value,
+            )
+          : result.data.logs;
     } catch {
       const mock = buildPeriodMock();
       cycles.value = mock.cycles;
@@ -108,6 +119,7 @@ export function usePeriod(
           end_date: null,
           cycle_length_days: model.value.insight.avgCycleLength,
           period_length_days: model.value.insight.avgPeriodLength,
+          recorded_by: myUserId.value,
           created_at: now,
           updated_at: now,
         },
@@ -155,6 +167,7 @@ export function usePeriod(
             user_id: periodOwnerId.value ?? 'mock-partner',
             cycle_length_days: model.value.insight.avgCycleLength,
             period_length_days: model.value.insight.avgPeriodLength,
+            recorded_by: myUserId.value,
             created_at: now,
             updated_at: now,
             ...patch,
@@ -209,6 +222,7 @@ export function usePeriod(
       const local: PeriodLog = {
         id: logFor(input.log_date)?.id ?? crypto.randomUUID(),
         user_id: 'mock-partner',
+        recorded_by: myUserId.value,
         created_at: now,
         updated_at: now,
         ...input,

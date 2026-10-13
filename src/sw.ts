@@ -46,6 +46,18 @@ registerRoute(
   }),
 );
 
+// 地理编码：把用户填写的任意城市名解析为坐标（支持改成任何城市）。
+// 坐标结果长期不变，缓存 30 天以减少请求。
+registerRoute(
+  /^https:\/\/geocoding-api\.open-meteo\.com\/.*$/i,
+  new CacheFirst({
+    cacheName: 'open-meteo-geocoding',
+    plugins: [
+      new ExpirationPlugin({ maxEntries: 64, maxAgeSeconds: 30 * 24 * 60 * 60 }),
+    ],
+  }),
+);
+
 registerRoute(
   /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*$/i,
   new CacheFirst({

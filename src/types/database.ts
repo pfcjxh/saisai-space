@@ -89,6 +89,8 @@ export interface Database {
           mood: string | null;
           mood_updated_at: string | null;
           gender: Gender | null;
+          /** 首页问候语下的自定义文案；为空时前端使用默认值 */
+          love_note: string | null;
           notify_diary: boolean;
           notify_anniversary: boolean;
           notify_period: boolean;
@@ -106,6 +108,7 @@ export interface Database {
           mood?: string | null;
           mood_updated_at?: string | null;
           gender?: Gender | null;
+          love_note?: string | null;
           notify_diary?: boolean;
           notify_anniversary?: boolean;
           notify_period?: boolean;
@@ -123,6 +126,7 @@ export interface Database {
           mood?: string | null;
           mood_updated_at?: string | null;
           gender?: Gender | null;
+          love_note?: string | null;
           notify_diary?: boolean;
           notify_anniversary?: boolean;
           notify_period?: boolean;
@@ -353,6 +357,8 @@ export interface Database {
           end_date: string | null;
           cycle_length_days: number;
           period_length_days: number;
+          /** 实际录入人；与 user_id 不同时表示伴侣代录 */
+          recorded_by: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -363,6 +369,7 @@ export interface Database {
           end_date?: string | null;
           cycle_length_days?: number;
           period_length_days?: number;
+          recorded_by?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -373,6 +380,7 @@ export interface Database {
           end_date?: string | null;
           cycle_length_days?: number;
           period_length_days?: number;
+          recorded_by?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -399,6 +407,8 @@ export interface Database {
           symptoms: Json;
           visibility: PeriodVisibility;
           notes: string | null;
+          /** 实际录入人；与 user_id 不同时表示伴侣代录 */
+          recorded_by: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -413,6 +423,7 @@ export interface Database {
           symptoms?: Json;
           visibility?: PeriodVisibility;
           notes?: string | null;
+          recorded_by?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -427,6 +438,7 @@ export interface Database {
           symptoms?: Json;
           visibility?: PeriodVisibility;
           notes?: string | null;
+          recorded_by?: string | null;
           created_at?: string;
           updated_at?: string;
         };

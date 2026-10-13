@@ -30,6 +30,7 @@ export function buildTodayMock(): TodayMock {
     mood: 'calm',
     mood_updated_at: now,
     gender: 'male',
+    love_note: '老婆，我爱你。',
     notify_diary: true,
     notify_anniversary: true,
     notify_period: true,
@@ -48,6 +49,7 @@ export function buildTodayMock(): TodayMock {
     mood: 'happy',
     mood_updated_at: now,
     gender: 'female',
+    love_note: null,
     notify_diary: true,
     notify_anniversary: true,
     notify_period: true,
@@ -58,8 +60,8 @@ export function buildTodayMock(): TodayMock {
   const couple: Couple = {
     id: 'mock-couple',
     invite_code: 'SAI520',
-    // 真实纪念日：2026-08-16 在一起
-    relationship_started_at: '2026-08-16',
+    // 演示用：在一起的日子（真实值由用户在设置页自行修改）
+    relationship_started_at: '2026-08-07',
     created_by: me.id,
     created_at: now,
     updated_at: now,
@@ -99,16 +101,16 @@ export function buildTodayMock(): TodayMock {
     },
   ];
 
-  // 她的经期记录：8月25日左右开始，9月8日左右结束；
-  // 周期不稳定、一般月初前后。记录不足 2 次，推算走默认均值（28/5）
+  // 她的经期记录（演示数据，日期相对今天动态推导，永不失效）
   const cycles: PeriodCycle[] = [
     {
       id: 'mock-cycle-1',
       user_id: partner.id,
-      start_date: '2026-08-25',
-      end_date: '2026-09-08',
+      start_date: addDays(today, -50),
+      end_date: addDays(today, -45),
       cycle_length_days: 28,
-      period_length_days: 15,
+      period_length_days: 5,
+      recorded_by: me.id,
       created_at: now,
       updated_at: now,
     },

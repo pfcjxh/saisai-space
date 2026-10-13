@@ -9,12 +9,9 @@ import PeriodCareCard from '@/components/dashboard/PeriodCareCard.vue';
 import WeatherCard from '@/components/dashboard/WeatherCard.vue';
 import UpcomingMilestoneCard from '@/components/dashboard/UpcomingMilestoneCard.vue';
 import MoodPickerSheet from '@/components/dashboard/MoodPickerSheet.vue';
-import NotificationSettingSheet from '@/components/settings/NotificationSettingSheet.vue';
 import ThemeSettingSheet from '@/components/settings/ThemeSettingSheet.vue';
 import ShareCardSheet from '@/components/dashboard/ShareCardSheet.vue';
-import type { NotifyPrefsState } from '@/components/settings/NotificationSettingSheet.vue';
 import { fetchProfile, updateMood } from '@/services/profileService';
-import { updateNotifyPrefs } from '@/services/pushService';
 import { fetchCoupleContext } from '@/services/coupleService';
 import { listAnniversaries } from '@/services/anniversaryService';
 import { listRecentCycles } from '@/services/periodService';
@@ -22,6 +19,7 @@ import { usePeriodCalculator } from '@/composables/usePeriodCalculator';
 import { readSnapshot, saveSnapshot, withTimeout } from '@/services/offlineStorage';
 import { buildTodayMock } from '@/mocks/todayMock';
 import {
+  DEFAULT_TIMEZONE,
   daysBetween,
   formatDateWithWeekday,
   hourInTimezone,
@@ -45,20 +43,19 @@ const anniversaries = ref<Anniversary[]>([]);
 /** true = 未登录/未配对/查询失败时的 Mock 兜底模式 */
 const isMock = ref(false);
 const moodOpen = ref(false);
-const settingsOpen = ref(false);
 const themeOpen = ref(false);
 const shareOpen = ref(false);
 const refreshing = ref(false);
 const weatherRef = ref<{ refresh: () => Promise<void> } | null>(null);
 
-const authUserId = computed<string | null>(() => auth.user?.id ?? null);
-const timezone = computed(() => me.value?.timezone ?? 'Asia/Shanghai');
+const timezone = computed(() => me.value?.timezone ?? DEFAULT_TIMEZONE);
 const today = computed(() => todayInTimezone(timezone.value));
 const hour = computed(() => hourInTimezone(timezone.value));
 const dateLabel = computed(() => formatDateWithWeekday(today.value));
 const partnerLabel = computed(() => (partner.value?.gender === 'female' ? '她' : '他'));
-/** 情话行（后续可接入日记/留言动态内容） */
-const loveNote = '老婆，我爱你。';
+/** 情话行：优先用户自定义文案（设置页可改），留空时回落到默认值 */
+const DEFAULT_LOVE_NOTE = '老婆，我爱你。';
+const loveNote = computed(() => me.value?.love_note?.trim() || DEFAULT_LOVE_NOTE);
 const insight = computed(() => compute(cycles.value, today.value));
 /** 男性伴侣视角：性别为 male 时展示关怀指南 */
 const partnerView = computed(() => me.value?.gender === 'male');
@@ -66,12 +63,6 @@ const myCharacter = computed<'hachi' | 'miffy'>(() =>
   coupleStore.context?.myRole === 'partner' ? 'miffy' : 'hachi',
 );
 const myMood = computed<Mood | null>(() => (me.value?.mood as Mood | null) ?? null);
-/** 通知偏好（Mock 模式回落全开） */
-const notifyPrefs = computed<NotifyPrefsState>(() => ({
-  notify_diary: me.value?.notify_diary ?? true,
-  notify_anniversary: me.value?.notify_anniversary ?? true,
-  notify_period: me.value?.notify_period ?? true,
-}));
 const partnerMood = computed<Mood | null>(() => (partner.value?.mood as Mood | null) ?? null);
 /** 头像：优先 profiles.avatar_url，未设置时回退本地专属形象（小八=我 / 米菲=她） */
 const myAvatarUrl = computed(() => me.value?.avatar_url ?? '/avatars/me.webp');
@@ -170,19 +161,6 @@ async function onSelectMood(mood: Mood): Promise<void> {
   }
 }
 
-async function onToggleNotifyPref(key: keyof NotifyPrefsState): Promise<void> {
-  const next = !notifyPrefs.value[key];
-  if (me.value) {
-    me.value = { ...me.value, [key]: next };
-  }
-  if (isMock.value || !auth.user) return;
-  try {
-    await updateNotifyPrefs(auth.user.id, { [key]: next });
-  } catch {
-    // 同步失败不打断操作，本地乐观状态已生效
-  }
-}
-
 async function handleRefresh(): Promise<void> {
   refreshing.value = true;
   try {
@@ -231,7 +209,7 @@ onMounted(loadDashboard);
         :partner-avatar-url="partnerAvatarUrl"
         :partner-nickname="partner?.nickname ?? 'TA'"
         @open-mood-picker="moodOpen = true"
-        @open-settings="settingsOpen = true"
+        @open-settings="router.push({ name: 'settings' })"
         @open-theme="themeOpen = true"
         @open-share-card="shareOpen = true"
       />
@@ -262,14 +240,6 @@ onMounted(loadDashboard);
     :current="myMood"
     @close="moodOpen = false"
     @select="onSelectMood"
-  />
-
-  <NotificationSettingSheet
-    :open="settingsOpen"
-    :my-user-id="authUserId"
-    :prefs="notifyPrefs"
-    @close="settingsOpen = false"
-    @toggle-pref="onToggleNotifyPref"
   />
 
   <ThemeSettingSheet :open="themeOpen" @close="themeOpen = false" />

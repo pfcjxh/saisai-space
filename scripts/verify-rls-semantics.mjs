@@ -139,18 +139,50 @@ record(
   `),
 );
 
+// 语义变更（迁移 0011）：伴侣**被允许**写入生理期数据（代录能力）。
+// 原断言「伴侣无法篡改周期记录」已不适用，改为验证：
+//   ① 写入仍受 CHECK 约束保护（非法值被拒）
+//   ② 非成员陌生人依然无法写入
 record(
   '2.3',
-  '伴侣无法篡改周期记录',
-  await assertBoolean(`
-    set local role authenticated;
-    set local request.jwt.claim.sub = '${fx.partner_id}';
-    with u as (
-      update public.period_cycles set cycle_length_days = 99
-      where user_id = '${fx.owner_id}' returning 1
-    )
-    select count(*) = 0 as ok from u;
-  `),
+  '周期写入仍受 CHECK 约束保护（非法值被拒）',
+  await (async () => {
+    try {
+      await assertBoolean(`
+        set local role authenticated;
+        set local request.jwt.claim.sub = '${fx.partner_id}';
+        with u as (
+          update public.period_cycles set cycle_length_days = 99
+          where user_id = '${fx.owner_id}' returning 1
+        )
+        select count(*) >= 0 as ok from u;
+      `);
+      return false; // 竟然没报错，说明约束失效
+    } catch (err) {
+      // 期望：23514 check_violation
+      return /23514|check constraint/i.test(String(err?.message ?? ''));
+    }
+  })(),
+);
+
+record(
+  '2.4',
+  '非成员陌生人无法写入他人周期记录',
+  await (async () => {
+    if (!fx.outsider_id) return true; // 无未配对用户时跳过
+    try {
+      await assertBoolean(`
+        set local role authenticated;
+        set local request.jwt.claim.sub = '${fx.outsider_id}';
+        insert into public.period_cycles (user_id, start_date)
+        values ('${fx.owner_id}', '2026-06-01');
+        select true as ok;
+      `);
+      return false; // 竟然写成功了
+    } catch {
+      return true; // 42501 被 RLS 拒绝
+    }
+  })(),
 );
 
 // ---------------------------------------------------------------- 3. diaries 越权
