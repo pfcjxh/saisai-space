@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, onUnmounted, ref } from 'vue';
 import type { Ref } from 'vue';
 import type { Todo } from '@/types/database';
 import { buildTodoMock } from '@/mocks/todoMock';
@@ -11,16 +11,21 @@ import {
   updateTodo,
 } from '@/services/todoService';
 import type { CreateTodoInput, UpdateTodoInput } from '@/services/todoService';
+import { clearScope, hasInflight, trackWrite, writeScope } from '@/utils/inflight';
 
 /**
  * useTodos — 待办业务逻辑层
  *
  * - 乐观更新：勾选先划线动画（400ms）再落库，失败回滚并弹温和提示；
  * - Mock 兜底：coupleId 为 null（未登录/未配对）时仅操作本地状态；
- * - Realtime 远端事件通过 applyRemote* 注入，与本地操作去重合并。
+ * - Realtime 远端事件通过 applyRemote* 注入，与本地操作去重合并；
+ * - **回环抑制**：本地写入在途时忽略该行的 Realtime 事件，防止乐观值被覆盖。
  */
 
 export type TodoCreatePayload = Omit<CreateTodoInput, 'couple_id' | 'created_by'>;
+
+/** 勾选动画时长：先播划线再落库 */
+const TOGGLE_ANIMATION_MS = 400;
 
 export function useTodos(coupleId: Ref<string | null>, myUserId: Ref<string | null>) {
   const todos = ref<Todo[]>([]);
@@ -30,6 +35,8 @@ export function useTodos(coupleId: Ref<string | null>, myUserId: Ref<string | nu
   const completingIds = ref<ReadonlySet<string>>(new Set());
 
   const isMock = computed(() => coupleId.value === null);
+  /** 本模块的在途写入作用域（随空间切换） */
+  const scope = computed(() => writeScope('todos', coupleId.value));
 
   const pending = computed(() => todos.value.filter((t) => !t.is_completed));
   const completed = computed(() =>
@@ -48,6 +55,16 @@ export function useTodos(coupleId: Ref<string | null>, myUserId: Ref<string | nu
       errorToast.value = null;
     }, 2500);
   }
+
+  /** 勾选落库的延迟定时器：组件卸载时必须清理，否则会在卸载后改状态并发请求 */
+  const toggleTimers = new Set<number>();
+
+  onUnmounted(() => {
+    for (const timer of toggleTimers) window.clearTimeout(timer);
+    toggleTimers.clear();
+    window.clearTimeout(toastTimer);
+    clearScope(scope.value);
+  });
 
   // ---------------------------------------------------------------- 加载
 
@@ -76,8 +93,20 @@ export function useTodos(coupleId: Ref<string | null>, myUserId: Ref<string | nu
     if (completingIds.value.has(todo.id)) return;
     completingIds.value = new Set(completingIds.value).add(todo.id);
 
-    window.setTimeout(() => {
-      const done = !todo.is_completed;
+    // 修复：原实现在定时器回调里读取闭包捕获的 todo 快照，400ms 内若 Realtime
+    // 带来伴侣的修改（改名/改期），会用旧快照覆盖掉新值。改为在回调触发时
+    // 从当前列表重新读取，只翻转 is_completed。
+    const timer = window.setTimeout(() => {
+      toggleTimers.delete(timer);
+
+      const current = todos.value.find((t) => t.id === todo.id);
+      if (!current) {
+        const next = new Set(completingIds.value);
+        next.delete(todo.id);
+        completingIds.value = next;
+        return;
+      }
+      const done = !current.is_completed;
       todos.value = todos.value.map((t) =>
         t.id === todo.id
           ? { ...t, is_completed: done, updated_at: new Date().toISOString() }
@@ -88,13 +117,21 @@ export function useTodos(coupleId: Ref<string | null>, myUserId: Ref<string | nu
       completingIds.value = next;
 
       if (isMock.value) return;
-      setTodoCompleted(todo.id, done).catch(() => {
-        todos.value = todos.value.map((t) =>
-          t.id === todo.id ? { ...t, is_completed: !done } : t,
-        );
-        showToast('同步失败，已恢复原状态');
-      });
-    }, 400);
+
+      // 登记在途：期间到达的 Realtime 事件一律忽略，避免把乐观值冲掉
+      const release = trackWrite(scope.value, [todo.id]);
+      setTodoCompleted(todo.id, done)
+        .catch(() => {
+          // 失败回滚：同样只翻转 is_completed，不整行覆盖
+          todos.value = todos.value.map((t) =>
+            t.id === todo.id ? { ...t, is_completed: !done } : t,
+          );
+          showToast('同步失败，已恢复原状态');
+        })
+        .finally(release);
+    }, TOGGLE_ANIMATION_MS);
+
+    toggleTimers.add(timer);
   }
 
   // ---------------------------------------------------------------- 创建 / 编辑 / 删除
@@ -117,6 +154,9 @@ export function useTodos(coupleId: Ref<string | null>, myUserId: Ref<string | nu
     const cid = coupleId.value;
     const uid = myUserId.value;
     if (!cid || !uid) return false;
+    // 创建期间该空间整体抑制远端事件：INSERT 的 id 由服务端生成，
+    // 我们事先不知道，无法按 id 精确抑制，因此用空 id 集合表示"作用域级抑制"。
+    const release = trackWrite(scope.value, []);
     try {
       const created = await createTodo({ ...payload, couple_id: cid, created_by: uid });
       // 本地插入与 Realtime INSERT 事件去重
@@ -127,6 +167,8 @@ export function useTodos(coupleId: Ref<string | null>, myUserId: Ref<string | nu
     } catch {
       showToast('创建失败，请检查网络后重试');
       return false;
+    } finally {
+      release();
     }
   }
 
@@ -135,6 +177,7 @@ export function useTodos(coupleId: Ref<string | null>, myUserId: Ref<string | nu
     if (!backup) return false;
     todos.value = todos.value.map((t) => (t.id === todoId ? { ...t, ...patch } : t));
     if (isMock.value) return true;
+    const release = trackWrite(scope.value, [todoId]);
     try {
       const updated = await updateTodo(todoId, patch);
       todos.value = todos.value.map((t) => (t.id === todoId ? updated : t));
@@ -143,6 +186,8 @@ export function useTodos(coupleId: Ref<string | null>, myUserId: Ref<string | nu
       todos.value = todos.value.map((t) => (t.id === todoId ? backup : t));
       showToast('保存失败，已恢复原内容');
       return false;
+    } finally {
+      release();
     }
   }
 
@@ -150,15 +195,29 @@ export function useTodos(coupleId: Ref<string | null>, myUserId: Ref<string | nu
     const backup = todos.value;
     todos.value = todos.value.filter((t) => t.id !== todoId);
     if (isMock.value) return;
+    const release = trackWrite(scope.value, [todoId]);
     try {
       await deleteTodo(todoId);
     } catch {
       todos.value = backup;
       showToast('删除失败，已恢复');
+    } finally {
+      release();
     }
   }
 
   // ---------------------------------------------------------------- Realtime 远端事件注入口
+
+  /**
+   * 回环抑制：本行有在途写入时，丢弃该 Realtime 事件。
+   *
+   * 为什么必须丢：Realtime 推来的可能是「我们自己刚写入但服务端尚未提交完成」
+   * 的旧值，直接套用会把乐观更新冲掉（界面表现为勾选后弹回）。
+   * 写入落定后 release，后续事件恢复正常套用。
+   */
+  function shouldIgnore(id: string): boolean {
+    return hasInflight(scope.value, [id]);
+  }
 
   function applyRemoteInsert(row: Todo): void {
     if (todos.value.some((t) => t.id === row.id)) return;
@@ -166,10 +225,12 @@ export function useTodos(coupleId: Ref<string | null>, myUserId: Ref<string | nu
   }
 
   function applyRemoteUpdate(row: Todo): void {
+    if (shouldIgnore(row.id)) return;
     todos.value = todos.value.map((t) => (t.id === row.id ? row : t));
   }
 
   function applyRemoteDelete(id: string): void {
+    if (shouldIgnore(id)) return;
     todos.value = todos.value.filter((t) => t.id !== id);
   }
 

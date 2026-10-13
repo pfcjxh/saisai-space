@@ -3,6 +3,7 @@ import type { Ref } from 'vue';
 import { supabase } from '@/services/supabase';
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import type { Todo } from '@/types/database';
+import { hasInflight, writeScope } from '@/utils/inflight';
 
 /**
  * useTodosRealtime — 待办 Realtime 双向同步引擎
@@ -32,11 +33,17 @@ export function useTodosRealtime(
   }
 
   function isTodoRow(row: unknown): row is Todo {
-    return typeof row === 'object' && row !== null && 'id' in row;
+    return (
+      typeof row === 'object' &&
+      row !== null &&
+      'id' in row &&
+      typeof (row as { id: unknown }).id === 'string'
+    );
   }
 
   function subscribe(id: string): void {
     teardown();
+    const scope = writeScope('todos', id);
     channel = supabase
       .channel(`couple-todos-${id}`)
       .on<Todo>(
@@ -50,14 +57,19 @@ export function useTodosRealtime(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'todos', filter: `couple_id=eq.${id}` },
         (payload: RealtimePostgresChangesPayload<Todo>) => {
-          if (isTodoRow(payload.new)) handlers.onUpdate(payload.new);
+          if (!isTodoRow(payload.new)) return;
+          // 回环抑制：本行有在途写入时以本地乐观值为准
+          if (hasInflight(scope, [payload.new.id])) return;
+          handlers.onUpdate(payload.new);
         },
       )
       .on<Todo>(
         'postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'todos', filter: `couple_id=eq.${id}` },
         (payload: RealtimePostgresChangesPayload<Todo>) => {
-          if (isTodoRow(payload.old)) handlers.onDelete(payload.old.id);
+          if (!isTodoRow(payload.old)) return;
+          if (hasInflight(scope, [payload.old.id])) return;
+          handlers.onDelete(payload.old.id);
         },
       )
       .subscribe();

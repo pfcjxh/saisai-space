@@ -3,6 +3,7 @@ import type { Ref } from 'vue';
 import { supabase } from '@/services/supabase';
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import type { Anniversary } from '@/types/database';
+import { hasInflight, writeScope } from '@/utils/inflight';
 
 /**
  * useAnniversariesRealtime — 纪念日 Realtime 同步
@@ -29,11 +30,17 @@ export function useAnniversariesRealtime(
   }
 
   function isAnniversaryRow(row: unknown): row is Anniversary {
-    return typeof row === 'object' && row !== null && 'id' in row;
+    return (
+      typeof row === 'object' &&
+      row !== null &&
+      'id' in row &&
+      typeof (row as { id: unknown }).id === 'string'
+    );
   }
 
   function subscribe(id: string): void {
     teardown();
+    const scope = writeScope('anniversaries', id);
     channel = supabase
       .channel(`couple-anniversaries-${id}`)
       .on<Anniversary>(
@@ -57,7 +64,10 @@ export function useAnniversariesRealtime(
           filter: `couple_id=eq.${id}`,
         },
         (payload: RealtimePostgresChangesPayload<Anniversary>) => {
-          if (isAnniversaryRow(payload.new)) handlers.onUpdate(payload.new);
+          if (!isAnniversaryRow(payload.new)) return;
+          // 回环抑制：本行有在途写入时以本地乐观值为准
+          if (hasInflight(scope, [payload.new.id])) return;
+          handlers.onUpdate(payload.new);
         },
       )
       .on<Anniversary>(
@@ -69,7 +79,9 @@ export function useAnniversariesRealtime(
           filter: `couple_id=eq.${id}`,
         },
         (payload: RealtimePostgresChangesPayload<Anniversary>) => {
-          if (isAnniversaryRow(payload.old)) handlers.onDelete(payload.old.id);
+          if (!isAnniversaryRow(payload.old)) return;
+          if (hasInflight(scope, [payload.old.id])) return;
+          handlers.onDelete(payload.old.id);
         },
       )
       .subscribe();

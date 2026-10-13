@@ -14,6 +14,7 @@ import {
 } from '@/services/diaryService';
 import { resolveMediaUrls, removeMedia } from '@/services/storageService';
 import { supabase } from '@/services/supabase';
+import { clearScope, hasInflight, trackWrite, writeScope } from '@/utils/inflight';
 
 /**
  * useDiaries — 共享日记业务逻辑层 + Realtime 通道
@@ -35,6 +36,8 @@ export function useDiaries(coupleId: Ref<string | null>, myUserId: Ref<string | 
   const errorToast = ref<string | null>(null);
 
   const isMock = computed(() => coupleId.value === null);
+  /** 在途写入作用域：抑制 Realtime 回环覆盖乐观更新 */
+  const scope = computed(() => writeScope('diaries', coupleId.value));
 
   let toastTimer: number | undefined;
   function showToast(message: string): void {
@@ -120,6 +123,7 @@ export function useDiaries(coupleId: Ref<string | null>, myUserId: Ref<string | 
     const backup = diaries.value;
     diaries.value = diaries.value.filter((d) => d.id !== diary.id);
     if (isMock.value) return;
+    const release = trackWrite(scope.value, [diary.id]);
     try {
       await deleteDiary(diary.id);
       // 清理存储媒体（失败不阻断删除流程）
@@ -129,6 +133,8 @@ export function useDiaries(coupleId: Ref<string | null>, myUserId: Ref<string | 
     } catch {
       diaries.value = backup;
       showToast('删除失败，已恢复');
+    } finally {
+      release();
     }
   }
 
@@ -144,11 +150,14 @@ export function useDiaries(coupleId: Ref<string | null>, myUserId: Ref<string | 
     const backup = diaries.value;
     diaries.value = diaries.value.map((d) => (d.id === diary.id ? { ...d, liked_by: next } : d));
     if (isMock.value) return;
+    const release = trackWrite(scope.value, [diary.id]);
     try {
       await updateDiary(diary.id, { liked_by: next });
     } catch {
       diaries.value = backup;
       showToast('操作失败，已恢复');
+    } finally {
+      release();
     }
   }
 
@@ -169,11 +178,14 @@ export function useDiaries(coupleId: Ref<string | null>, myUserId: Ref<string | 
         : d,
     );
     if (isMock.value) return;
+    const release = trackWrite(scope.value, [diary.id]);
     try {
       await updateDiary(diary.id, { comments: next });
     } catch {
       diaries.value = backup;
       showToast('回复失败，已恢复');
+    } finally {
+      release();
     }
   }
 
@@ -210,6 +222,8 @@ export function useDiaries(coupleId: Ref<string | null>, myUserId: Ref<string | 
         (payload: RealtimePostgresChangesPayload<Diary>) => {
           const row = payload.new as Diary;
           if (!row || typeof row.id !== 'string') return;
+          // 回环抑制：本行有在途写入（点赞/评论/编辑）时以本地乐观值为准
+          if (hasInflight(scope.value, [row.id])) return;
           diaries.value = diaries.value.map((d) => (d.id === row.id ? row : d));
         },
       )
@@ -219,6 +233,7 @@ export function useDiaries(coupleId: Ref<string | null>, myUserId: Ref<string | 
         (payload: RealtimePostgresChangesPayload<Diary>) => {
           const old = payload.old as Diary;
           if (!old || typeof old.id !== 'string') return;
+          if (hasInflight(scope.value, [old.id])) return;
           diaries.value = diaries.value.filter((d) => d.id !== old.id);
         },
       )
@@ -237,7 +252,11 @@ export function useDiaries(coupleId: Ref<string | null>, myUserId: Ref<string | 
     { immediate: true },
   );
 
-  onUnmounted(teardown);
+  onUnmounted(() => {
+    teardown();
+    clearScope(scope.value);
+    window.clearTimeout(toastTimer);
+  });
 
   return {
     diaries,

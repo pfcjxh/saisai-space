@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/services/supabase';
 import { clearSnapshots, setSnapshotIdentity } from '@/services/offlineStorage';
+import { clearAllScopes } from '@/utils/inflight';
 
 /**
  * 鉴权状态层：Supabase Auth 会话的唯一前端镜像。
@@ -64,6 +65,8 @@ export const useAuthStore = defineStore('auth', () => {
     // 必须在 supabase.signOut 之前清理：signOut 会触发 SIGNED_OUT 事件，
     // 而快照定位依赖"登出前"的身份指纹。
     await clearSnapshots();
+    // 在途写入登记同样按身份隔离，登出时一并清空，避免抑制状态泄漏到下一账号
+    clearAllScopes();
     await supabase.auth.signOut();
     session.value = null;
     user.value = null;

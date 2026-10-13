@@ -6,6 +6,7 @@ import { buildWishMock } from '@/mocks/wishMock';
 import { createWish, deleteWish, listWishes, updateWish } from '@/services/wishService';
 import { resolveMediaUrls, removeMedia } from '@/services/storageService';
 import { supabase } from '@/services/supabase';
+import { clearScope, hasInflight, trackWrite, writeScope } from '@/utils/inflight';
 
 /**
  * useWishes — 双人心愿单业务逻辑层 + Realtime 通道
@@ -24,6 +25,8 @@ export function useWishes(coupleId: Ref<string | null>, myUserId: Ref<string | n
   const errorToast = ref<string | null>(null);
 
   const isMock = computed(() => coupleId.value === null);
+  /** 在途写入作用域：抑制 Realtime 回环覆盖乐观更新 */
+  const scope = computed(() => writeScope('wishes', coupleId.value));
 
   const pending = computed(() => wishes.value.filter((w) => !w.is_fulfilled));
   const fulfilled = computed(() =>
@@ -119,6 +122,7 @@ export function useWishes(coupleId: Ref<string | null>, myUserId: Ref<string | n
         : w,
     );
     if (isMock.value) return next;
+    const release = trackWrite(scope.value, [wish.id]);
     try {
       await updateWish(wish.id, {
         is_fulfilled: next,
@@ -129,6 +133,8 @@ export function useWishes(coupleId: Ref<string | null>, myUserId: Ref<string | n
       wishes.value = backup;
       showToast('操作失败，已恢复');
       return !next;
+    } finally {
+      release();
     }
   }
 
@@ -137,12 +143,18 @@ export function useWishes(coupleId: Ref<string | null>, myUserId: Ref<string | n
     const backup = wishes.value;
     wishes.value = wishes.value.map((w) => (w.id === wish.id ? { ...w, image_path: imagePath } : w));
     if (isMock.value) return;
+    const release = trackWrite(scope.value, [wish.id]);
     try {
       await updateWish(wish.id, { image_path: imagePath });
-      await resolveAll([wish]);
+      // 修复：原实现传的是**旧的 wish 对象**（image_path 仍为 null），
+      // 签名结果里没有新路径，照片要等下次 load 才显示。
+      // 改为传更新后的对象，让新路径立即参与签名。
+      await resolveAll([{ ...wish, image_path: imagePath }]);
     } catch {
       wishes.value = backup;
       showToast('照片保存失败，已恢复');
+    } finally {
+      release();
     }
   }
 
@@ -150,12 +162,15 @@ export function useWishes(coupleId: Ref<string | null>, myUserId: Ref<string | n
     const backup = wishes.value;
     wishes.value = wishes.value.filter((w) => w.id !== wish.id);
     if (isMock.value) return;
+    const release = trackWrite(scope.value, [wish.id]);
     try {
       await deleteWish(wish.id);
       if (wish.image_path) removeMedia(wish.image_path).catch(() => undefined);
     } catch {
       wishes.value = backup;
       showToast('删除失败，已恢复');
+    } finally {
+      release();
     }
   }
 
@@ -192,6 +207,8 @@ export function useWishes(coupleId: Ref<string | null>, myUserId: Ref<string | n
         (payload: RealtimePostgresChangesPayload<Wish>) => {
           const row = payload.new as Wish;
           if (!row || typeof row.id !== 'string') return;
+          // 回环抑制：本行有在途写入时以本地乐观值为准
+          if (hasInflight(scope.value, [row.id])) return;
           wishes.value = wishes.value.map((w) => (w.id === row.id ? row : w));
         },
       )
@@ -201,6 +218,7 @@ export function useWishes(coupleId: Ref<string | null>, myUserId: Ref<string | n
         (payload: RealtimePostgresChangesPayload<Wish>) => {
           const old = payload.old as Wish;
           if (!old || typeof old.id !== 'string') return;
+          if (hasInflight(scope.value, [old.id])) return;
           wishes.value = wishes.value.filter((w) => w.id !== old.id);
         },
       )
@@ -219,7 +237,11 @@ export function useWishes(coupleId: Ref<string | null>, myUserId: Ref<string | n
     { immediate: true },
   );
 
-  onUnmounted(teardown);
+  onUnmounted(() => {
+    teardown();
+    clearScope(scope.value);
+    window.clearTimeout(toastTimer);
+  });
 
   return {
     wishes,

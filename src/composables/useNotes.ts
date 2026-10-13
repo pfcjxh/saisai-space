@@ -5,6 +5,7 @@ import type { StickyNote, StickyNoteColor } from '@/types/database';
 import { buildNoteMock } from '@/mocks/noteMock';
 import { createNote, deleteNote, listNotes, updateNote } from '@/services/noteService';
 import { supabase } from '@/services/supabase';
+import { clearScope, hasInflight, trackWrite, writeScope } from '@/utils/inflight';
 
 /**
  * useNotes — 便利贴墙业务逻辑层 + Realtime 通道
@@ -22,6 +23,8 @@ export function useNotes(coupleId: Ref<string | null>, myUserId: Ref<string | nu
   const errorToast = ref<string | null>(null);
 
   const isMock = computed(() => coupleId.value === null);
+  /** 在途写入作用域：抑制 Realtime 回环覆盖乐观更新 */
+  const scope = computed(() => writeScope('notes', coupleId.value));
 
   let toastTimer: number | undefined;
   function showToast(message: string): void {
@@ -77,6 +80,7 @@ export function useNotes(coupleId: Ref<string | null>, myUserId: Ref<string | nu
     const backup = notes.value;
     notes.value = notes.value.map((n) => (n.id === note.id ? { ...n, ...patch } : n));
     if (isMock.value) return true;
+    const release = trackWrite(scope.value, [note.id]);
     try {
       const saved = await updateNote(note.id, patch);
       notes.value = notes.value.map((n) => (n.id === saved.id ? saved : n));
@@ -85,6 +89,8 @@ export function useNotes(coupleId: Ref<string | null>, myUserId: Ref<string | nu
       notes.value = backup;
       showToast('修改失败，已恢复');
       return false;
+    } finally {
+      release();
     }
   }
 
@@ -92,11 +98,14 @@ export function useNotes(coupleId: Ref<string | null>, myUserId: Ref<string | nu
     const backup = notes.value;
     notes.value = notes.value.filter((n) => n.id !== note.id);
     if (isMock.value) return;
+    const release = trackWrite(scope.value, [note.id]);
     try {
       await deleteNote(note.id);
     } catch {
       notes.value = backup;
       showToast('撕下失败，已恢复');
+    } finally {
+      release();
     }
   }
 
@@ -132,6 +141,8 @@ export function useNotes(coupleId: Ref<string | null>, myUserId: Ref<string | nu
         (payload: RealtimePostgresChangesPayload<StickyNote>) => {
           const row = payload.new as StickyNote;
           if (!row || typeof row.id !== 'string') return;
+          // 回环抑制：本行有在途写入时以本地乐观值为准
+          if (hasInflight(scope.value, [row.id])) return;
           notes.value = notes.value.map((n) => (n.id === row.id ? row : n));
         },
       )
@@ -141,6 +152,7 @@ export function useNotes(coupleId: Ref<string | null>, myUserId: Ref<string | nu
         (payload: RealtimePostgresChangesPayload<StickyNote>) => {
           const old = payload.old as StickyNote;
           if (!old || typeof old.id !== 'string') return;
+          if (hasInflight(scope.value, [old.id])) return;
           notes.value = notes.value.filter((n) => n.id !== old.id);
         },
       )
@@ -159,7 +171,11 @@ export function useNotes(coupleId: Ref<string | null>, myUserId: Ref<string | nu
     { immediate: true },
   );
 
-  onUnmounted(teardown);
+  onUnmounted(() => {
+    teardown();
+    clearScope(scope.value);
+    window.clearTimeout(toastTimer);
+  });
 
   return { notes, loading, errorToast, isMock, load, create, update, remove };
 }

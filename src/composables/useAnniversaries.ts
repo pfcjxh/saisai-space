@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, onUnmounted, ref } from 'vue';
 import type { Ref } from 'vue';
 import type { Anniversary } from '@/types/database';
 import { buildAnniversaryMock } from '@/mocks/anniversaryMock';
@@ -15,6 +15,7 @@ import type {
 } from '@/services/anniversaryService';
 import { nextOccurrence } from '@/utils/lunar';
 import { DEFAULT_TIMEZONE, todayInTimezone } from '@/utils/date';
+import { clearScope, hasInflight, trackWrite, writeScope } from '@/utils/inflight';
 
 /**
  * useAnniversaries — 纪念日业务逻辑层
@@ -44,6 +45,13 @@ export function useAnniversaries(
 
   const isMock = computed(() => coupleId.value === null);
   const today = computed(() => todayInTimezone(timezone.value));
+  /** 在途写入作用域：抑制 Realtime 回环覆盖乐观更新 */
+  const scope = computed(() => writeScope('anniversaries', coupleId.value));
+
+  onUnmounted(() => {
+    clearScope(scope.value);
+    window.clearTimeout(toastTimer);
+  });
 
   let toastTimer: number | undefined;
   function showToast(message: string): void {
@@ -121,6 +129,7 @@ export function useAnniversaries(
     const cid = coupleId.value;
     const uid = myUserId.value;
     if (!cid || !uid) return false;
+    const release = trackWrite(scope.value, []);
     try {
       const created = await createAnniversary({ ...payload, couple_id: cid, created_by: uid });
       if (!items.value.some((a) => a.id === created.id)) {
@@ -130,6 +139,8 @@ export function useAnniversaries(
     } catch {
       showToast('创建失败，请检查网络后重试');
       return false;
+    } finally {
+      release();
     }
   }
 
@@ -138,6 +149,7 @@ export function useAnniversaries(
     if (!backup) return false;
     items.value = items.value.map((a) => (a.id === id ? { ...a, ...patch } : a));
     if (isMock.value) return true;
+    const release = trackWrite(scope.value, [id]);
     try {
       const updated = await updateAnniversary(id, patch);
       items.value = items.value.map((a) => (a.id === id ? updated : a));
@@ -146,6 +158,8 @@ export function useAnniversaries(
       items.value = items.value.map((a) => (a.id === id ? backup : a));
       showToast('保存失败，已恢复原内容');
       return false;
+    } finally {
+      release();
     }
   }
 
@@ -153,11 +167,14 @@ export function useAnniversaries(
     const backup = items.value;
     items.value = items.value.filter((a) => a.id !== id);
     if (isMock.value) return;
+    const release = trackWrite(scope.value, [id]);
     try {
       await deleteAnniversary(id);
     } catch {
       items.value = backup;
       showToast('删除失败，已恢复');
+    } finally {
+      release();
     }
   }
 
@@ -169,10 +186,13 @@ export function useAnniversaries(
   }
 
   function applyRemoteUpdate(row: Anniversary): void {
+    // 双保险：写侧已登记在途，这里再兜一层（handler 注入路径可能绕过 Realtime 包装）
+    if (hasInflight(scope.value, [row.id])) return;
     items.value = items.value.map((a) => (a.id === row.id ? row : a));
   }
 
   function applyRemoteDelete(id: string): void {
+    if (hasInflight(scope.value, [id])) return;
     items.value = items.value.filter((a) => a.id !== id);
   }
 
