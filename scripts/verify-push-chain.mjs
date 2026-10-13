@@ -12,7 +12,8 @@ for (const line of readFileSync('.env', 'utf8').split('\n')) {
   const i = line.indexOf('=');
   if (i > 0 && !line.startsWith('#')) env[line.slice(0, i).trim()] = line.slice(i + 1).trim();
 }
-const PROJECT_REF = 'whxivdsckeiqraivrodt';
+// 项目 ref 从 .env 的 VITE_SUPABASE_URL 推导，避免把真实项目地址写死在源码里
+const PROJECT_REF = env.SUPABASE_PROJECT_REF ?? new URL(env.VITE_SUPABASE_URL).hostname.split('.')[0];
 const password = 'Saisai#Test520';
 
 async function sql(query) {
