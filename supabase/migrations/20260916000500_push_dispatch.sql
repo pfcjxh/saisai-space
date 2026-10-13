@@ -30,8 +30,23 @@ CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 
 -- ============================================================================
--- 3. 密钥托管（Vault）
+-- 3. 密钥与配置托管（Vault）
 -- ============================================================================
+
+-- 3.0 项目 URL（非机密，但集中托管避免硬编码）。
+--     Supabase 托管环境**禁止** ALTER DATABASE ... SET app.settings.*（42501），
+--     因此 App 配置统一走 Vault，由 push_functions_base_url() 读取。
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM vault.secrets WHERE name = 'supabase_project_url') THEN
+        PERFORM vault.create_secret(
+            'https://whxivdsckeiqraivrodt.supabase.co',
+            'supabase_project_url',
+            '项目 URL，供 Edge Functions 端点拼接（非机密）'
+        );
+    END IF;
+END;
+$$;
 
 -- 3.1 首次执行时生成 32 字节随机密钥；已存在则保持不变（轮换见 0009 迁移）
 DO $$

@@ -31,37 +31,59 @@
 3. `.env.example` 清空所有真实凭据，改为占位符 + 获取途径说明。
 4. `scripts/verify-push-chain.mjs` 的项目 ref 改为从 `.env` 推导，不再硬编码。
 
-### 待你手动执行（**必做**）
-> 旧密钥（`aassddff…rtyy`，完整值见泄露时的版本历史）已视为泄露，**必须作废**。
+### 已完成（2026-10-14，已对生产库执行并验证）
+> 旧密钥 `aassddff…rtyy` 曾经是**实际生效**的密钥——调查发现 Edge Secret 虽被改过，
+> 但函数容器从未重启，运行的仍是旧值。现已彻底作废。
 
-```bash
-# 1) 应用轮换迁移（会打印新密钥的 SHA-256 指纹）
-supabase db push
+| 步骤 | 状态 |
+|---|---|
+| 项目 URL 托管到 Vault（Supabase 禁止 `ALTER DATABASE SET app.settings.*`，报 42501） | ✅ |
+| 迁移 `...000500` v2 建立 Vault 密钥 + 辅助函数 + 重写触发器与 cron | ✅ 已应用 |
+| 轮换密钥（32 字节随机），同步写入 Vault 与 Edge Secrets | ✅ 已轮换 |
+| 重新部署 `send-push` v5 / `daily-check-push` v4 使新环境变量生效 | ✅ 已部署 |
+| 端到端验证 | ✅ **13/13 通过** |
 
-# 2) 取回新密钥明文
-#    Dashboard -> SQL Editor:
-#    SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'push_webhook_secret';
+**关键验证结果**（`node scripts/verify-push-chain.mjs`）：
 
-# 3) 同步到 Edge Function，否则推送会 401
-supabase secrets set PUSH_WEBHOOK_SECRET="<上一步取回的值>"
-
-# 4) 重新部署两个函数
-supabase functions deploy send-push --no-verify-jwt
-supabase functions deploy daily-check-push --no-verify-jwt
-
-# 5) 验证链路（会写一篇测试日记并读取 pg_net 响应）
-node scripts/verify-push-chain.mjs
+```
+Vault 新密钥 -> HTTP 200   链路通
+旧泄漏密钥   -> HTTP 401   已作废  ← 整改核心目标
+随机错误密钥 -> HTTP 401   防伪造
 ```
 
-**同时建议轮换**（这三项曾以明文存在于工作区 `.env`，且目录无 git 历史保护）：
+> ⚠️ 一个容易踩的坑：**写入 Edge Secret 后必须重新部署函数**，否则容器仍用旧
+> 环境变量。而且 Management API 的 `secrets` 接口返回的 `value` 字段是**不透明
+> 表示**（非明文），无法用它比对密钥是否生效——唯一可信的验证方式是让真实链路
+> 调用一次函数（见 `scripts/verify-push-chain.mjs`）。
+
+### 仍建议轮换（你已表示暂不处理，仅作记录）
+这三项曾以明文存在于工作区 `.env`：
 
 - Supabase Dashboard → Project Settings → API → **Roll `service_role` / secret key**
 - Supabase Account → Access Tokens → **吊销并重建** `sbp_...`
 - Cloudflare → My Profile → API Tokens → **Roll** `cfut_...`
 
-## 三、日常约定
+## 三、日常约定与运维脚本
 
 - 新增需要机密的迁移时，一律走 Vault：`vault.create_secret()` + `SECURITY DEFINER` 读取函数 + `REVOKE FROM anon, authenticated`。
+- **密钥轮换**用现成脚本，不要手工改：
+  ```bash
+  node scripts/sync-push-secret.mjs --check    # 只校验两侧是否一致
+  node scripts/sync-push-secret.mjs --rotate   # 生成新值并写入两侧
+  # 轮换后必须重新部署函数，否则环境变量不生效：
+  npx supabase functions deploy send-push --project-ref <ref> --no-verify-jwt
+  npx supabase functions deploy daily-check-push --project-ref <ref> --no-verify-jwt
+  node scripts/verify-push-chain.mjs           # 端到端验证
+  ```
+- **应用迁移**用事务化脚本（失败自动回滚）：
+  ```bash
+  node scripts/apply-migration.mjs --file <迁移.sql> [--dry]
+  ```
+- **直连生产库**执行 SQL：
+  ```bash
+  node scripts/supabase-sql.mjs "select 1"
+  node scripts/supabase-sql.mjs --file <文件.sql>
+  ```
 - 提交前自查：
   ```bash
   git diff --cached | grep -nE 'sb_secret_|sbp_|cfut_|eyJhbGciOi|aassddff'
