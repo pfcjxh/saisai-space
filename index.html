@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- 视口防御：禁止双击缩放，覆盖刘海屏安全区 -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <title>赛赛 · 双人空间</title>
+    <meta name="description" content="属于我们两个人的私密小宇宙" />
+
+    <!-- PWA 主题 -->
+    <meta name="theme-color" content="#000000" />
+
+    <!-- 主题防闪烁：首帧前按本地存储应用外观主题（与 useTheme.ts 同规则同键名） -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('saisai:theme');
+          if (t === 'auto') {
+            t = matchMedia('(prefers-color-scheme: light)').matches ? 'cream' : '';
+          }
+          if (t && t !== 'default') document.documentElement.dataset.theme = t;
+        } catch (e) {
+          /* 存储不可用时保持默认纯黑 */
+        }
+      })();
+    </script>
+
+    <!-- iOS 独立应用模式 -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="赛赛" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- 图标 -->
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,210 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   Design Tokens — impeccable 规范
+   iOS System Gray 暗色体系 + 小八 Serene Blue / 米菲 Warm Amber 点睛色
+   ========================================================================== */
+@theme {
+  /* 基础：OLED 纯黑背景 */
+  --color-ink: #000000;
+  /* 一级容器卡片：iOS System Gray 6 */
+  --color-card: #1c1c1e;
+  /* 二级交互组件：iOS System Gray 5 */
+  --color-card-2: #2c2c2e;
+  /* 边框与分隔线 */
+  --color-separator: rgba(255, 255, 255, 0.08);
+
+  /* 小八意象 · Serene Blue：日常状态流转与平静关怀 */
+  --color-serene: #70a5d8;
+  --color-serene-soft: #a9cbe8;
+
+  /* 米菲意象 · Warm Amber：纪念日倒数与成就庆祝 */
+  --color-amber-warm: #ffae5d;
+  --color-amber-soft: #ffd9a0;
+
+  /* 参考设计第三点缀：淡紫（FAB / 下划线指示 / 进度条） */
+  --color-lilac: #c4b5fd;
+
+  /* 生理期意象：柔和玫红 */
+  --color-rose: #fb7185;
+
+  /* 排卵日标记紫 */
+  --color-ovulation: #a855f7;
+
+  /* 淡奶白：点缀底色 */
+  --color-milk: #f5f1e8;
+
+  /* ------------------------------------------------------------------
+     语义前景色（随主题切换；此处为深色（默认）取值）
+     fg 主文字 / fg-soft 次级文字 / fg-mute 辅助微字 / on-accent 强调色块上的文字
+     ------------------------------------------------------------------ */
+  --color-fg: #f5f5f5;
+  --color-fg-soft: #a3a3a3;
+  --color-fg-mute: #8b8b8b;
+  --color-on-accent: #000000;
+
+  /* 字体：系统字体栈，中文优先 PingFang SC */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC',
+    'Noto Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
+
+  /* 阻尼减速曲线（ease-out-quart），常规动效 <= 350ms */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* ==========================================================================
+   背景主题（运行时切换：html[data-theme]）
+   纯黑 OLED（默认）/ 米白 / 雾蓝 / 樱粉
+   ========================================================================== */
+:root {
+  /* 卡片顶部内发光（深色主题为白色微光） */
+  --glow-inset: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme='cream'] {
+  --color-ink: #f6f1e7;
+  --color-card: #fdfaf3;
+  --color-card-2: #ece4d5;
+  --color-separator: rgba(74, 62, 48, 0.1);
+  --color-fg: #3b3228;
+  --color-fg-soft: #6c6156;
+  --color-fg-mute: #94897b;
+  --color-on-accent: #2b2620;
+  --glow-inset: rgba(255, 255, 255, 0.75);
+  color-scheme: light;
+}
+
+[data-theme='mist'] {
+  --color-ink: #edf2f8;
+  --color-card: #ffffff;
+  --color-card-2: #dfe8f2;
+  --color-separator: rgba(40, 60, 85, 0.1);
+  --color-fg: #24313d;
+  --color-fg-soft: #57646f;
+  --color-fg-mute: #83919c;
+  --color-on-accent: #1c2833;
+  --glow-inset: rgba(255, 255, 255, 0.85);
+  color-scheme: light;
+}
+
+[data-theme='sakura'] {
+  --color-ink: #fbf1f2;
+  --color-card: #ffffff;
+  --color-card-2: #f4e2e4;
+  --color-separator: rgba(90, 55, 60, 0.1);
+  --color-fg: #402f31;
+  --color-fg-soft: #6e5a5c;
+  --color-fg-mute: #9a8587;
+  --color-on-accent: #331f22;
+  --glow-inset: rgba(255, 255, 255, 0.85);
+  color-scheme: light;
+}
+
+/* 卡片内发光统一样式（替代各处内联 inset 阴影，随主题切换） */
+@utility card-glow {
+  box-shadow: inset 0 1px 0 0 var(--glow-inset);
+}
+
+/* ==========================================================================
+   安全区工具类（iOS 刘海 / 底部手势条）
+   ========================================================================== */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@utility pl-safe {
+  padding-left: env(safe-area-inset-left);
+}
+@utility pr-safe {
+  padding-right: env(safe-area-inset-right);
+}
+
+/* ==========================================================================
+   动效与滚动工具
+   ========================================================================== */
+
+/* TabBar 激活弹性微动效（300ms 阻尼弹簧，规范上限 350ms 内） */
+/* 注意：@keyframes 必须置于顶层，嵌套在 @utility 内会被 lightningcss 丢弃 */
+@keyframes tab-pop {
+  0% {
+    transform: scale(0.75);
+  }
+  55% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@utility animate-tab-pop {
+  animation: tab-pop 300ms var(--ease-out-quart);
+}
+
+/* 隐藏滚动条（保留滚动能力），用于 App Shell 内部滚动容器 */
+@utility scrollbar-none {
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   全局微排版基础
+   ========================================================================== */
+@layer base {
+  html {
+    height: 100%;
+    background-color: var(--color-ink);
+    color-scheme: dark;
+    /* iOS WebKit 防御：禁止整页橡皮筋（露出浏览器底色）+ 禁止文字自动膨胀 */
+    overscroll-behavior-y: none;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    /* 浏览器原生表面主题化：光标、原生控件强调色随品牌 */
+    caret-color: var(--color-serene);
+    accent-color: var(--color-serene);
+  }
+
+  body {
+    height: 100dvh;
+    /* 禁用 body 级滚动：滚动只发生在页面内容器，杜绝滚动穿透 */
+    overflow: hidden;
+    @apply bg-ink font-sans text-fg antialiased;
+    /* 抑制 iOS 长按触控高亮与过度滚动回弹闪烁 */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+    /* 全局数值防抖动 */
+    font-variant-numeric: tabular-nums;
+  }
+
+  #app {
+    height: 100dvh;
+  }
+
+  /* 文本选区：品牌蓝的低饱和染色（浏览器默认蓝与暗色世界不协调） */
+  ::selection {
+    background-color: color-mix(in srgb, var(--color-serene) 35%, transparent);
+  }
+
+  /* 键盘焦点环：统一品牌蓝，替代被清空的浏览器默认描边 */
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--color-serene) 75%, transparent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* iOS 300ms 点击延迟与双击误缩放防御：所有可交互元素统一 manipulation */
+  button,
+  a,
+  label,
+  [role='button'],
+  input,
+  textarea,
+  select {
+    touch-action: manipulation;
+  }
+}

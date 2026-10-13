@@ -1,0 +1,2 @@
+# SPA 路由回退：所有路径交给 index.html，保证 /together、/cycle 等地址直接访问/刷新不 404
+/*    /index.html   200

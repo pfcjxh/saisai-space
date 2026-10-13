@@ -1,0 +1,542 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue';
+import { Plus, Search } from '@lucide/vue';
+import { useAuthStore } from '@/stores/auth';
+import { useCoupleStore } from '@/stores/couple';
+import AppTabs from '@/components/common/AppTabs.vue';
+import CharacterAvatar from '@/components/common/CharacterAvatar.vue';
+import TodoItemCard from '@/components/todos/TodoItemCard.vue';
+import TodoCreateSheet from '@/components/todos/TodoCreateSheet.vue';
+import type { TodoFormPayload } from '@/components/todos/TodoCreateSheet.vue';
+import AnniversaryCard from '@/components/anniversaries/AnniversaryCard.vue';
+import AnniversaryCalendarView from '@/components/anniversaries/AnniversaryCalendarView.vue';
+import AnniversaryCreateSheet from '@/components/anniversaries/AnniversaryCreateSheet.vue';
+import type { AnniversaryFormPayload } from '@/components/anniversaries/AnniversaryCreateSheet.vue';
+import { useTodos } from '@/composables/useTodos';
+import { useTodosRealtime } from '@/composables/useTodosRealtime';
+import { useAnniversaries } from '@/composables/useAnniversaries';
+import { useAnniversariesRealtime } from '@/composables/useAnniversariesRealtime';
+import { useMemories } from '@/composables/useMemories';
+import { useLetters } from '@/composables/useLetters';
+import MemoryTimeline from '@/components/memories/MemoryTimeline.vue';
+import LetterEnvelopeOverlay from '@/components/letters/LetterEnvelopeOverlay.vue';
+import { fetchCoupleContext } from '@/services/coupleService';
+import type { Anniversary, LoveLetter, Todo } from '@/types/database';
+import { addDays, formatDateWithWeekday, todayInTimezone } from '@/utils/date';
+
+defineOptions({ name: 'TogetherView' });
+
+const auth = useAuthStore();
+const coupleStore = useCoupleStore();
+
+const coupleId = computed(() => coupleStore.coupleId);
+const myUserId = computed(() => auth.user?.id ?? null);
+
+const {
+  todos,
+  pending,
+  completed,
+  errorToast,
+  completingIds,
+  load,
+  toggle,
+  create,
+  update,
+  remove,
+  applyRemoteInsert,
+  applyRemoteUpdate,
+  applyRemoteDelete,
+} = useTodos(coupleId, myUserId);
+
+useTodosRealtime(coupleId, {
+  onInsert: applyRemoteInsert,
+  onUpdate: applyRemoteUpdate,
+  onDelete: applyRemoteDelete,
+});
+
+// ---------------------------------------------------------------- 纪念日
+
+const {
+  views: anniversaryViews,
+  futureCount: anniversaryFutureCount,
+  errorToast: anniversaryToast,
+  load: loadAnniversaries,
+  create: createAnniversary,
+  update: updateAnniversary,
+  remove: removeAnniversary,
+  applyRemoteInsert: applyRemoteAnnInsert,
+  applyRemoteUpdate: applyRemoteAnnUpdate,
+  applyRemoteDelete: applyRemoteAnnDelete,
+} = useAnniversaries(coupleId, myUserId);
+
+useAnniversariesRealtime(coupleId, {
+  onInsert: applyRemoteAnnInsert,
+  onUpdate: applyRemoteAnnUpdate,
+  onDelete: applyRemoteAnnDelete,
+});
+
+// ---------------------------------------------------------------- 回忆时间轴
+
+const { items: memoryItems, load: loadMemories } = useMemories(coupleId);
+const { letters, load: loadLetters, remove: removeLetter } = useLetters(coupleId, myUserId);
+/** 从时间轴拆信：本机已阅集合 + 当前展开的信 */
+const openedLetter = ref<LoveLetter | null>(null);
+const readIds = ref(new Set<string>());
+
+function openLetterById(id: string): void {
+  const letter = letters.value.find((l) => l.id === id) ?? null;
+  if (!letter) return;
+  readIds.value.add(letter.id);
+  openedLetter.value = letter;
+}
+
+function onLetterRemove(letter: LoveLetter): void {
+  openedLetter.value = null;
+  void removeLetter(letter);
+}
+
+const letterAuthorName = computed(() => {
+  if (!openedLetter.value) return '';
+  if (openedLetter.value.author_id === myUserId.value) return '我';
+  return coupleStore.context?.partner?.nickname ?? 'TA';
+});
+
+// ---------------------------------------------------------------- 视图状态
+
+const topTab = ref<'todos' | 'anniversaries' | 'memories'>('todos');
+const subTab = ref<'pending' | 'completed'>('pending');
+const annSubTab = ref<'list' | 'calendar'>('list');
+const query = ref('');
+const sheetOpen = ref(false);
+const editing = ref<Todo | null>(null);
+const annSheetOpen = ref(false);
+const editingAnniversary = ref<Anniversary | null>(null);
+
+/** 温和提示条：待办与纪念日共享同一出口 */
+const toastMessage = computed(() => errorToast.value ?? anniversaryToast.value);
+
+const today = computed(() => todayInTimezone('Asia/Shanghai'));
+const dateLabel = computed(() => formatDateWithWeekday(today.value));
+/** 今日完成数：updated_at 落在今天的已完成任务 */
+const todayCompletedCount = computed(
+  () =>
+    completed.value.filter((t) => {
+      const d = new Date(t.updated_at);
+      const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return local === today.value;
+    }).length,
+);
+
+const topOptions = [
+  { value: 'todos', label: '待办' },
+  { value: 'anniversaries', label: '纪念日' },
+  { value: 'memories', label: '回忆' },
+];
+
+const subOptions = computed(() => [
+  { value: 'pending', label: '未完成', badge: pending.value.length },
+  { value: 'completed', label: '已完成', badge: completed.value.length },
+]);
+
+const annOptions = [
+  { value: 'list', label: '清单' },
+  { value: 'calendar', label: '日历' },
+];
+
+/** 头部统计行：随一级页签切换语义 */
+const statsLine = computed(() =>
+  topTab.value === 'todos'
+    ? `${dateLabel.value} · 未完成 ${pending.value.length} · 今日完成 ${todayCompletedCount.value}`
+    : topTab.value === 'anniversaries'
+      ? `共 ${anniversaryViews.value.length} 条 · 未来 ${anniversaryFutureCount.value} 条`
+      : `共 ${memoryItems.value.length} 段回忆`,
+);
+
+function matchQuery(todo: Todo): boolean {
+  const q = query.value.trim();
+  if (!q) return true;
+  return todo.title.includes(q) || todo.category.includes(q.toLowerCase());
+}
+
+const filteredCompleted = computed(() => completed.value.filter(matchQuery));
+
+// ---------------------------------------------------------------- 日期分组（参考设计：今天 / 明天 / 更晚 / 无日期）
+
+interface TodoGroup {
+  key: string;
+  label: string;
+  items: Todo[];
+}
+
+function localDateOf(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const pendingGroups = computed<TodoGroup[]>(() => {
+  const todayStr = today.value;
+  const tomorrowStr = addDays(todayStr, 1);
+  const todayGroup: TodoGroup = { key: 'today', label: '今天', items: [] };
+  const tomorrowGroup: TodoGroup = { key: 'tomorrow', label: '明天', items: [] };
+  const laterGroup: TodoGroup = { key: 'later', label: '更晚', items: [] };
+  const noneGroup: TodoGroup = { key: 'none', label: '无日期', items: [] };
+  for (const todo of pending.value.filter(matchQuery)) {
+    if (!todo.due_date) {
+      noneGroup.items.push(todo);
+      continue;
+    }
+    const dateStr = localDateOf(todo.due_date);
+    if (dateStr <= todayStr) {
+      todayGroup.items.push(todo); // 已过期归入今天
+    } else if (dateStr === tomorrowStr) {
+      tomorrowGroup.items.push(todo);
+    } else {
+      laterGroup.items.push(todo);
+    }
+  }
+  return [todayGroup, tomorrowGroup, laterGroup, noneGroup].filter(
+    (g) => g.items.length > 0,
+  );
+});
+
+// ---------------------------------------------------------------- 归属视角
+
+function assigneeOf(todo: Todo): 'me' | 'partner' | 'both' {
+  if (!todo.assigned_to) return 'both';
+  if (todo.assigned_to === myUserId.value) return 'me';
+  return 'partner';
+}
+
+const editingAssignee = computed<'me' | 'partner' | 'both'>(() =>
+  editing.value ? assigneeOf(editing.value) : 'both',
+);
+
+// ---------------------------------------------------------------- 动作
+
+function openCreate(): void {
+  editing.value = null;
+  sheetOpen.value = true;
+}
+
+function openEdit(todo: Todo): void {
+  editing.value = todo;
+  sheetOpen.value = true;
+}
+
+function computeDueDate(payload: TodoFormPayload): string | null {
+  if (payload.recurrence_rule === 'weekly' && payload.weekday !== null) {
+    const now = new Date();
+    const diff = (payload.weekday - now.getDay() + 7) % 7 || 7;
+    const target = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + diff,
+      12,
+      0,
+      0,
+    );
+    return target.toISOString();
+  }
+  if (payload.specificDate) {
+    return new Date(`${payload.specificDate}T12:00:00`).toISOString();
+  }
+  return null;
+}
+
+async function onSubmit(payload: TodoFormPayload): Promise<void> {
+  sheetOpen.value = false;
+  const assigned_to =
+    payload.assignee === 'me'
+      ? (myUserId.value ?? 'mock-me')
+      : payload.assignee === 'partner'
+        ? (coupleStore.context?.partner?.id ?? 'mock-partner')
+        : null;
+  const due_date = computeDueDate(payload);
+
+  if (editing.value) {
+    await update(editing.value.id, {
+      title: payload.title,
+      description: payload.description,
+      category: payload.category,
+      priority: payload.priority,
+      recurrence_rule: payload.recurrence_rule,
+      assigned_to,
+      due_date,
+    });
+  } else {
+    await create({
+      title: payload.title,
+      description: payload.description,
+      category: payload.category,
+      priority: payload.priority,
+      recurrence_rule: payload.recurrence_rule,
+      assigned_to,
+      due_date,
+    });
+  }
+}
+
+function openAnniversaryCreate(): void {
+  editingAnniversary.value = null;
+  annSheetOpen.value = true;
+}
+
+function openAnniversaryEdit(item: Anniversary): void {
+  editingAnniversary.value = item;
+  annSheetOpen.value = true;
+}
+
+async function onAnniversarySubmit(payload: AnniversaryFormPayload): Promise<void> {
+  annSheetOpen.value = false;
+  if (editingAnniversary.value) {
+    await updateAnniversary(editingAnniversary.value.id, {
+      title: payload.title,
+      category: payload.category,
+      target_date: payload.targetDateSolar,
+      is_lunar: payload.isLunar,
+      repeat_yearly: payload.repeatYearly,
+      pinned: payload.pinned,
+    });
+  } else {
+    await createAnniversary({
+      title: payload.title,
+      category: payload.category,
+      target_date: payload.targetDateSolar,
+      is_lunar: payload.isLunar,
+      repeat_yearly: payload.repeatYearly,
+      pinned: payload.pinned,
+    });
+  }
+}
+
+function onFabClick(): void {
+  if (topTab.value === 'todos') {
+    openCreate();
+  } else {
+    openAnniversaryCreate();
+  }
+}
+
+// ---------------------------------------------------------------- 装载
+
+onMounted(async () => {
+  // 已登录但尚未加载空间上下文（如直接落在本页）时补载
+  if (auth.user && !coupleStore.context) {
+    try {
+      const context = await fetchCoupleContext(auth.user.id);
+      if (context) coupleStore.setContext(context);
+    } catch {
+      // 离线时保持 Mock 模式
+    }
+  }
+  await Promise.all([load(), loadAnniversaries(), loadMemories(), loadLetters()]);
+});
+</script>
+
+<template>
+  <div class="flex h-full flex-col pt-safe">
+    <!-- 页头：标题 + 统计行 + 一级页签 -->
+    <header class="px-4 pt-4">
+      <h1 class="text-2xl font-bold">我们</h1>
+      <p class="mt-0.5 text-xs text-fg-soft tabular-nums">
+        {{ statsLine }}
+      </p>
+      <AppTabs v-model="topTab" class="mt-2" :options="topOptions" />
+    </header>
+
+    <!-- 待办子视图 -->
+    <template v-if="topTab === 'todos'">
+      <div class="mt-3 px-4">
+        <div
+          class="flex h-10 items-center gap-2 rounded-full border border-separator bg-card px-4"
+        >
+          <Search :size="15" class="shrink-0 text-fg-soft" />
+          <input
+            v-model="query"
+            type="search"
+            placeholder="搜索标题或标签"
+            class="w-full bg-transparent text-sm text-fg placeholder-fg-mute outline-none"
+          />
+        </div>
+      </div>
+
+      <div class="mt-1 px-4">
+        <AppTabs v-model="subTab" :options="subOptions" />
+      </div>
+
+      <div
+        class="scrollbar-none mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(104px+env(safe-area-inset-bottom))]"
+      >
+        <!-- 未完成：按日期分组 -->
+        <template v-if="subTab === 'pending'">
+          <div
+            v-if="pendingGroups.length === 0"
+            class="flex flex-col items-center gap-2 py-14 text-center"
+          >
+            <CharacterAvatar character="hachi" mood="calm" :size="52" />
+            <p class="text-xs text-fg-soft">
+              {{ query ? '没有找到相关待办' : '今天的事情都搞定啦，去休息吧' }}
+            </p>
+          </div>
+          <div v-for="group in pendingGroups" :key="group.key" class="mb-4">
+            <p class="mb-2 text-xs text-fg-soft tabular-nums">
+              {{ group.label }} {{ group.items.length }}
+            </p>
+            <ul class="flex flex-col gap-3">
+              <li v-for="todo in group.items" :key="todo.id">
+                <TodoItemCard
+                  :todo="todo"
+                  :assignee="assigneeOf(todo)"
+                  :completing="completingIds.has(todo.id)"
+                  @toggle="toggle(todo)"
+                  @edit="openEdit(todo)"
+                  @remove="remove(todo.id)"
+                />
+              </li>
+            </ul>
+          </div>
+        </template>
+
+        <!-- 已完成 -->
+        <template v-else>
+          <div
+            v-if="filteredCompleted.length === 0"
+            class="flex flex-col items-center gap-2 py-14 text-center"
+          >
+            <CharacterAvatar character="miffy" mood="calm" :size="52" />
+            <p class="text-xs text-fg-soft">还没有完成记录，一起加油</p>
+          </div>
+          <ul v-else class="flex flex-col gap-3">
+            <li v-for="todo in filteredCompleted" :key="todo.id">
+              <TodoItemCard
+                :todo="todo"
+                :assignee="assigneeOf(todo)"
+                :completing="completingIds.has(todo.id)"
+                @toggle="toggle(todo)"
+                @edit="openEdit(todo)"
+                @remove="remove(todo.id)"
+              />
+            </li>
+          </ul>
+        </template>
+      </div>
+
+    </template>
+
+    <!-- 纪念日子视图 -->
+    <template v-else-if="topTab === 'anniversaries'">
+      <div class="mt-1 px-4">
+        <AppTabs v-model="annSubTab" :options="annOptions" />
+      </div>
+
+      <div
+        class="scrollbar-none mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(104px+env(safe-area-inset-bottom))]"
+      >
+        <!-- 清单模式 -->
+        <template v-if="annSubTab === 'list'">
+          <div
+            v-if="anniversaryViews.length === 0"
+            class="flex flex-col items-center gap-2 py-14 text-center"
+          >
+            <CharacterAvatar character="miffy" mood="happy" :size="52" />
+            <p class="text-xs text-fg-soft">还没有纪念日，记下第一个重要的日子吧</p>
+          </div>
+          <ul v-else class="flex flex-col gap-3">
+            <li v-for="item in anniversaryViews" :key="item.id">
+              <AnniversaryCard
+                :anniversary="item"
+                @edit="openAnniversaryEdit(item)"
+                @remove="removeAnniversary(item.id)"
+              />
+            </li>
+          </ul>
+        </template>
+
+        <!-- 日历模式 -->
+        <AnniversaryCalendarView
+          v-else
+          :anniversaries="anniversaryViews"
+          :todos="todos"
+          :today="today"
+        />
+      </div>
+    </template>
+
+    <!-- 回忆时间轴子视图 -->
+    <template v-else>
+      <div
+        class="scrollbar-none mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(104px+env(safe-area-inset-bottom))]"
+      >
+        <div
+          v-if="memoryItems.length === 0"
+          class="flex flex-col items-center gap-2 py-14 text-center"
+        >
+          <CharacterAvatar character="hachi" mood="caring" :size="52" />
+          <p class="text-xs text-fg-soft">故事从第一篇日记、第一个纪念日开始</p>
+        </div>
+        <MemoryTimeline v-else :items="memoryItems" @open-letter="openLetterById" />
+      </div>
+    </template>
+
+    <!-- 新建 FAB（淡紫圆角方形，随板块切换目标） -->
+    <button
+      v-if="topTab !== 'memories'"
+      type="button"
+      class="absolute right-4 bottom-[calc(96px+env(safe-area-inset-bottom))] z-10 flex size-13 items-center justify-center rounded-[18px] bg-lilac text-on-accent shadow-[0_6px_20px_rgba(196,181,253,0.35)] transition-transform duration-200 ease-out-quart active:scale-90"
+      :aria-label="topTab === 'todos' ? '新建待办' : '新建纪念日'"
+      @click="onFabClick"
+    >
+      <Plus :size="24" :stroke-width="2.2" />
+    </button>
+
+    <!-- 新建 / 编辑抽屉 -->
+    <TodoCreateSheet
+      :open="sheetOpen"
+      :editing="editing"
+      :editing-assignee="editingAssignee"
+      @close="sheetOpen = false"
+      @submit="onSubmit"
+    />
+    <AnniversaryCreateSheet
+      :open="annSheetOpen"
+      :editing="editingAnniversary"
+      @close="annSheetOpen = false"
+      @submit="onAnniversarySubmit"
+    />
+
+    <!-- 时间轴拆信浮层 -->
+    <LetterEnvelopeOverlay
+      :open="openedLetter !== null"
+      :letter="openedLetter"
+      :is-author="openedLetter?.author_id === myUserId"
+      :author-name="letterAuthorName"
+      @close="openedLetter = null"
+      @remove="onLetterRemove"
+    />
+
+    <!-- 温和提示条 -->
+    <Transition name="toast">
+      <div
+        v-if="toastMessage"
+        class="fixed top-[calc(12px+env(safe-area-inset-top))] left-1/2 z-50 -translate-x-1/2 rounded-full border border-separator bg-card-2 px-4 py-2 text-xs whitespace-nowrap text-fg shadow-lg"
+        role="status"
+      >
+        {{ toastMessage }}
+      </div>
+    </Transition>
+  </div>
+</template>
+
+<style scoped>
+.toast-enter-active,
+.toast-leave-active {
+  transition:
+    opacity 250ms ease,
+    transform 250ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -8px);
+}
+</style>

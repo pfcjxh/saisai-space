@@ -1,0 +1,41 @@
+{
+  "name": "saisai-space",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "赛赛 · 双人私密空间 PWA",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
+    "preview": "vite preview",
+    "icons": "node scripts/generate-icons.mjs"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.46.0",
+    "@supabase/supabase-js": "^2.58.0",
+    "@vueuse/core": "^13.9.0",
+    "canvas-confetti": "^1.9.3",
+    "lunar-javascript": "^1.7.7",
+    "pinia": "^3.0.3",
+    "vue": "^3.5.18",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.13",
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/node": "^24.3.0",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "sharp": "^0.35.4",
+    "tailwindcss": "^4.1.13",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.5",
+    "vite-plugin-pwa": "^1.1.0",
+    "vue-tsc": "^3.0.6",
+    "workbox-core": "^7.4.1",
+    "workbox-expiration": "^7.4.1",
+    "workbox-precaching": "^7.4.1",
+    "workbox-routing": "^7.4.1",
+    "workbox-strategies": "^7.4.1"
+  }
+}
