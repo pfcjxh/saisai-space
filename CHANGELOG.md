@@ -19,8 +19,11 @@
 | `checkpoint-6-final` | `cb13bff` | 交付文档 CHANGELOG.md + 回退指引 |
 | `checkpoint-7-realtime` | `00084cc` | Realtime 回环抑制（在途写入追踪 + 乐观更新防覆盖） |
 | `checkpoint-8-dedup-rls` | `31c3327` | 左滑/键盘避让去重 + RLS `(select auth.uid())` 性能迁移（已落生产） |
+| `checkpoint-9-docs` | `a06939a` | CHANGELOG 更新（第二轮保存点与遗留事项） |
+| `checkpoint-10-push-secret` | `c1a8475` | **推送密钥轮换闭环**：Vault 托管 + 旧泄漏密钥作废 + 函数重部署 |
+| `checkpoint-11-push-e2e` | — | 推送验证覆盖真实日记触发器路径（14/14 通过） |
 
-> `checkpoint-8` 起为第二轮深化工作，六个保存点均基于 `checkpoint-6` 之后追加。
+> `checkpoint-7` 起为第二轮深化工作，均基于 `checkpoint-6` 之后追加。
 
 ---
 
@@ -151,31 +154,25 @@ $env:TEMP = Join-Path $PWD '.tmp-build'; $env:TMP = $env:TEMP
 - `tests/rls-penetration.mjs` 依赖公网访问项目域名，**本机无法运行**，
   改用 `scripts/verify-rls-semantics.mjs` 在同一连接内切身份断言。
 
-**当前验证结果**：
+**当前验证结果（全部为生产环境实测）**：
 - `typecheck` 通过；`build` 通过（precache 45 项）
 - 时区测试 6 时区 × 22 项 = **132 项全绿**
 - 在途写入测试 **28 项全绿**
-- 线上 RLS 语义验证 **17/19 通过**（余 2 项 = 待办的推送密钥迁移）
-- 无头 Chrome 实测线上 `https://saisai-pp-space.pages.dev`：今日页 **11/11 命中，零运行时错误**
-- 前端已部署至 Cloudflare Pages 生产环境
+- RLS 语义验证 **19/19 通过**
+- 推送链路端到端验证 **14/14 通过**
+  （新密钥 200 / 旧泄漏密钥 401 / 错误密钥 401 / 真实写日记触发 200）
+- 线上 `https://saisai-pp-space.pages.dev`：今日页 **11/11 命中，零运行时错误**
 
 ---
 
-## 五、遗留事项（未在本轮处理）
+## 五、遗留事项
 
-1. **推送密钥轮换（唯一阻塞项）**：DB 侧函数 `notify_diary_push` 与 cron 任务
-   `daily-check-push` 仍含已泄漏的明文密钥；Vault 已建好但尚未写入值。
-   需要令牌具备 **Edge Functions** 权限（`edge_functions_secrets_write` +
-   `edge_functions_secrets_read` + `edge_functions_read`），之后一条命令即可完成：
-   ```bash
-   node scripts/supabase-sql.mjs --file supabase/migrations/20260916000900_rotate_push_webhook_secret.sql
-   ```
-   当前令牌仅有 `database` 写权限（`api.supabase.com/v1/projects/<ref>/database/query`
-   返回 201），Functions/Secrets 端点均 403。授权方式：Access Tokens 页 →
-   `saisai2` 那一行的 ⋮ → Edit → 勾选 Edge Functions 相关权限。
-2. **凭据轮换**：`service_role`、Supabase access token、Cloudflare token 建议轮换
-   （见 [SECURITY.md](SECURITY.md)）。你已表示暂不处理，此处仅作记录。
-3. **`QuickTodoCard`** 去留待决策（首页当前不展示待办速览）。
-4. **调研报告中未落地的借鉴项**：Playwright E2E 骨架、月历网格 ×2 去重、
+1. **凭据轮换（建议，非阻塞）**：`.env` 中的 `service_role`、Supabase access token、
+   Cloudflare token 曾以明文存在于工作区。你已表示暂不处理，仅作记录
+   （见 [SECURITY.md](SECURITY.md) 第二节）。
+2. **`QuickTodoCard`** 去留待决策（首页当前不展示待办速览）。
+3. **调研报告中未落地的借鉴项**：Playwright E2E 骨架、月历网格 ×2 去重、
    弹层 CSS ×13 收敛为单一 `<BaseSheet>`。
+
+> 推送密钥轮换已**完成并验证**，不再属于遗留事项 —— 详见 `checkpoint-10`。
 4. 调研报告中的其余借鉴项（Realtime 回环抑制、VueUse 去重左滑/键盘避让、Playwright E2E、RLS 的 `(select auth.uid())` 性能写法）尚未落地，可作为后续迭代。
