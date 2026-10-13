@@ -11,7 +11,11 @@ import NotificationSettingSheet from '@/components/settings/NotificationSettingS
 import { useAuthStore } from '@/stores/auth';
 import { useCoupleStore } from '@/stores/couple';
 import { fetchProfile, updateProfile } from '@/services/profileService';
-import { updateRelationshipStartedAt } from '@/services/coupleService';
+import {
+  fetchCoupleSettings,
+  updateCoupleSettings,
+  updateRelationshipStartedAt,
+} from '@/services/coupleService';
 import { updateNotifyPrefs } from '@/services/pushService';
 import { CITY_GROUPS } from '@/composables/useWeather';
 import { buildTodayMock } from '@/mocks/todayMock';
@@ -46,6 +50,24 @@ const toastIsError = ref(false);
 const startedAt = ref('');
 /** 首页情话（本地编辑态） */
 const loveNote = ref('');
+
+/**
+ * 脏值基线：载入时记录服务端原值，用于「改了没」判断。
+ * 保存按钮据此灰显，避免连点与无意义的重复请求（操作流畅度的关键细节）。
+ */
+const baseline = ref({ startedAt: '', loveNote: '' });
+
+const startedAtDirty = computed(
+  () => startedAt.value !== '' && startedAt.value !== baseline.value.startedAt,
+);
+const loveNoteDirty = computed(
+  () => loveNote.value.trim() !== baseline.value.loveNote.trim(),
+);
+
+/** 空间共享设置（代录授权） */
+const proxyPeriodWrite = ref(true);
+const proxyProfileEdit = ref(true);
+const settingsSaving = ref(false);
 
 const themeOpen = ref(false);
 const notifyOpen = ref(false);
@@ -105,6 +127,10 @@ async function load(): Promise<void> {
       partner.value = mock.partner;
       startedAt.value = mock.couple.relationship_started_at;
       loveNote.value = mock.me.love_note ?? '';
+      baseline.value = {
+        startedAt: mock.couple.relationship_started_at,
+        loveNote: mock.me.love_note ?? '',
+      };
       return;
     }
 
@@ -116,9 +142,18 @@ async function load(): Promise<void> {
     if (context) {
       partner.value = context.partner;
       startedAt.value = context.couple.relationship_started_at;
+      // 共享设置（代录授权）
+      try {
+        const settings = await fetchCoupleSettings(context.couple.id);
+        proxyPeriodWrite.value = settings.allow_proxy_period_write;
+        proxyProfileEdit.value = settings.allow_proxy_profile_edit;
+      } catch {
+        // 读取失败时沿用默认（不阻塞页面其它部分）
+      }
     } else if (self) {
       startedAt.value = today.value;
     }
+    baseline.value = { startedAt: startedAt.value, loveNote: loveNote.value };
   } catch {
     showToast('资料加载失败，请检查网络', true);
   } finally {
@@ -151,6 +186,7 @@ async function onSaveStartedAt(): Promise<void> {
     if (coupleStore.context) {
       coupleStore.setContext({ ...coupleStore.context, couple: updated });
     }
+    baseline.value = { ...baseline.value, startedAt: startedAt.value };
     showToast(`已保存 · 在一起第 ${daysTogether.value} 天`);
   } catch {
     showToast('保存失败，请重试', true);
@@ -238,11 +274,47 @@ async function onSaveLoveNote(): Promise<void> {
   try {
     const updated = await updateProfile(uid, { love_note: text || null });
     me.value = updated;
+    baseline.value = { ...baseline.value, loveNote: text };
     showToast(text ? '情话已更新' : '已清空，将使用默认文案');
   } catch {
     showToast('保存失败，请重试', true);
   } finally {
     saving.value = false;
+  }
+}
+
+// ---------------------------------------------------------------- 代录授权
+
+/**
+ * 切换代录授权。这是显式、可见、可撤销的开关：
+ * 关掉后伴侣立即失去对生理期数据的写入权限（RLS 层生效）。
+ */
+async function onToggleProxy(key: 'period' | 'profile'): Promise<void> {
+  const cid = coupleId.value;
+  const uid = auth.user?.id ?? null;
+  if (!cid) {
+    showToast('还没有双人空间', true);
+    return;
+  }
+  const field =
+    key === 'period' ? 'allow_proxy_period_write' : 'allow_proxy_profile_edit';
+  const next = !(key === 'period' ? proxyPeriodWrite.value : proxyProfileEdit.value);
+
+  // 乐观更新
+  const prev = key === 'period' ? proxyPeriodWrite.value : proxyProfileEdit.value;
+  if (key === 'period') proxyPeriodWrite.value = next;
+  else proxyProfileEdit.value = next;
+
+  settingsSaving.value = true;
+  try {
+    await updateCoupleSettings(cid, { [field]: next }, uid);
+    showToast(next ? '已允许代录' : '已关闭代录，对方将无法再修改');
+  } catch {
+    if (key === 'period') proxyPeriodWrite.value = prev;
+    else proxyProfileEdit.value = prev;
+    showToast('设置失败，请重试', true);
+  } finally {
+    settingsSaving.value = false;
   }
 }
 
@@ -323,10 +395,10 @@ async function onSignOut(): Promise<void> {
               tone="amber"
               class="mt-2"
               :loading="saving"
-              :disabled="!coupleId"
+              :disabled="!coupleId || !startedAtDirty"
               @click="onSaveStartedAt"
             >
-              {{ coupleId ? '保存日期' : '尚未配对空间' }}
+              {{ !coupleId ? '尚未配对空间' : startedAtDirty ? '保存日期' : '日期未改动' }}
             </AppButton>
             <p v-if="!coupleId" class="mt-2 text-center text-[10px] text-fg-soft">
               先到「登录」页创建或加入双人空间
@@ -568,9 +640,78 @@ async function onSignOut(): Promise<void> {
               class="mt-3 h-11 w-full rounded-xl border border-separator bg-card-2 px-3 text-sm text-fg placeholder-fg-mute outline-none focus:border-lilac/50"
               @keyup.enter="onSaveLoveNote"
             />
-            <AppButton block class="mt-2" :loading="saving" @click="onSaveLoveNote">
-              保存文案
+            <AppButton
+              block
+              class="mt-2"
+              :loading="saving"
+              :disabled="!loveNoteDirty"
+              @click="onSaveLoveNote"
+            >
+              {{ loveNoteDirty ? '保存文案' : '文案未改动' }}
             </AppButton>
+          </AppCard>
+        </section>
+
+        <!-- ============ 代录授权 ============ -->
+        <section v-if="partner">
+          <p class="mb-2 px-1 text-[11px] text-fg-soft">互相帮忙</p>
+          <AppCard accent="lilac">
+            <p class="text-[11px] leading-5 text-fg-soft">
+              她不在时你可以帮她记录。这两个开关双方都能看到、随时能关——
+              关掉后对方立刻失去相应权限。
+            </p>
+
+            <!-- 生理期代录 -->
+            <button
+              type="button"
+              class="mt-3 flex w-full items-center gap-3 text-left"
+              :disabled="settingsSaving"
+              @click="onToggleProxy('period')"
+            >
+              <span class="min-w-0 flex-1">
+                <span class="block text-sm">允许代为记录生理期</span>
+                <span class="mt-0.5 block text-[10px] leading-4 text-fg-mute">
+                  开启后可以帮 TA 打卡与补录；TA 标记「仅自己可见」的内容仍不会被看到
+                </span>
+              </span>
+              <span
+                class="relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200"
+                :class="proxyPeriodWrite ? 'bg-lilac' : 'bg-neutral-600'"
+                role="switch"
+                :aria-checked="proxyPeriodWrite"
+              >
+                <span
+                  class="absolute top-0.5 size-5 rounded-full bg-white transition-transform duration-200 ease-out-quart"
+                  :class="proxyPeriodWrite ? 'translate-x-[22px]' : 'translate-x-0.5'"
+                />
+              </span>
+            </button>
+
+            <!-- 资料代改 -->
+            <button
+              type="button"
+              class="mt-3 flex w-full items-center gap-3 border-t border-separator pt-3 text-left"
+              :disabled="settingsSaving"
+              @click="onToggleProxy('profile')"
+            >
+              <span class="min-w-0 flex-1">
+                <span class="block text-sm">允许代为修改资料</span>
+                <span class="mt-0.5 block text-[10px] leading-4 text-fg-mute">
+                  开启后可以帮 TA 改昵称与所在城市
+                </span>
+              </span>
+              <span
+                class="relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200"
+                :class="proxyProfileEdit ? 'bg-lilac' : 'bg-neutral-600'"
+                role="switch"
+                :aria-checked="proxyProfileEdit"
+              >
+                <span
+                  class="absolute top-0.5 size-5 rounded-full bg-white transition-transform duration-200 ease-out-quart"
+                  :class="proxyProfileEdit ? 'translate-x-[22px]' : 'translate-x-0.5'"
+                />
+              </span>
+            </button>
           </AppCard>
         </section>
 

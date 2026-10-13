@@ -335,8 +335,16 @@ const rlsEnabled = await assertBoolean(`
 `);
 record('6.2', '所有 public 表均已启用 RLS', rlsEnabled);
 
+// 策略总数不写死数字：随着功能增加（如 0012 的 couple_settings 带来 3 条），
+// 该值会合法增长。这里只校验「不低于历史基线」，避免断言随每次迁移过期。
 const policyCount = await q(`select count(*)::int as n from pg_policies where schemaname='public'`);
-record('6.3', '策略总数仍为 46', (policyCount[0]?.n ?? -1) === 46, `n=${policyCount[0]?.n}`);
+const POLICY_BASELINE = 46;
+record(
+  '6.3',
+  `策略数不低于基线 ${POLICY_BASELINE}`,
+  (policyCount[0]?.n ?? -1) >= POLICY_BASELINE,
+  `n=${policyCount[0]?.n}`,
+);
 
 // ---------------------------------------------------------------- 汇总
 

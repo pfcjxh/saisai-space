@@ -49,6 +49,49 @@ export async function updateRelationshipStartedAt(
 }
 
 /**
+ * 空间共享设置。
+ * 目前只有两个代录授权开关——它们决定「伴侣能否代为录入/维护对方数据」，
+ * 属于双方都可查看、可更改的显式授权（默认开启，可随时收回）。
+ */
+export interface CoupleSettings {
+  couple_id: string;
+  allow_proxy_period_write: boolean;
+  allow_proxy_profile_edit: boolean;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+/** 读取空间设置；不存在时返回默认值（不写库，避免读操作产生副作用） */
+export async function fetchCoupleSettings(coupleId: string): Promise<CoupleSettings> {
+  const { data, error } = await supabase
+    .from('couple_settings')
+    .select('*')
+    .eq('couple_id', coupleId)
+    .maybeSingle();
+  if (error) throw error;
+  if (data) return data;
+  return {
+    couple_id: coupleId,
+    allow_proxy_period_write: true,
+    allow_proxy_profile_edit: true,
+    updated_at: new Date().toISOString(),
+    updated_by: null,
+  };
+}
+
+/** 更新空间设置（部分字段） */
+export async function updateCoupleSettings(
+  coupleId: string,
+  patch: Partial<Pick<CoupleSettings, 'allow_proxy_period_write' | 'allow_proxy_profile_edit'>>,
+  updatedBy: string | null,
+): Promise<void> {
+  const { error } = await supabase
+    .from('couple_settings')
+    .upsert({ couple_id: coupleId, ...patch, updated_by: updatedBy }, { onConflict: 'couple_id' });
+  if (error) throw error;
+}
+
+/**
  * 读取当前用户的情侣空间上下文：空间信息 + 本人角色 + 伴侣资料。
  * 未加入任何空间时返回 null。
  * 查询收敛为三次并行/串行请求，无 N+1。

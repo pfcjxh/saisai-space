@@ -671,6 +671,41 @@ export interface Database {
         ];
       };
 
+      couple_settings: {
+        Row: {
+          couple_id: string;
+          /** 是否允许伴侣代为录入生理期数据 */
+          allow_proxy_period_write: boolean;
+          /** 是否允许伴侣修改自己的资料（昵称/城市） */
+          allow_proxy_profile_edit: boolean;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: {
+          couple_id: string;
+          allow_proxy_period_write?: boolean;
+          allow_proxy_profile_edit?: boolean;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Update: {
+          couple_id?: string;
+          allow_proxy_period_write?: boolean;
+          allow_proxy_profile_edit?: boolean;
+          updated_at?: string;
+          updated_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'couple_settings_couple_id_fkey';
+            columns: ['couple_id'];
+            isOneToOne: true;
+            referencedRelation: 'couples';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+
       push_subscriptions: {
         Row: {
           id: string;
