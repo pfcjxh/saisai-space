@@ -2,6 +2,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { ImagePlus, X } from '@lucide/vue';
 import AppButton from '@/components/common/AppButton.vue';
+import { useKeyboardAvoid } from '@/composables/useKeyboardAvoid';
 import type { Mood } from '@/types/database';
 import { todayInTimezone } from '@/utils/date';
 
@@ -106,28 +107,11 @@ async function onSubmit(): Promise<void> {
 }
 
 // ---------------------------------------------------------------- 键盘避让
+// 逻辑统一由 useKeyboardAvoid 提供（原为 6 处逐行重复的实现）
 
-const keyboardOffset = ref(0);
-
-function onViewportResize(): void {
-  const vv = window.visualViewport;
-  keyboardOffset.value = vv ? Math.max(0, window.innerHeight - vv.height) : 0;
-}
-
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      window.visualViewport?.addEventListener('resize', onViewportResize);
-    } else {
-      window.visualViewport?.removeEventListener('resize', onViewportResize);
-      keyboardOffset.value = 0;
-    }
-  },
-);
+const keyboardOffset = useKeyboardAvoid(computed(() => props.open));
 
 onUnmounted(() => {
-  window.visualViewport?.removeEventListener('resize', onViewportResize);
   previews.value.forEach((u) => URL.revokeObjectURL(u));
 });
 

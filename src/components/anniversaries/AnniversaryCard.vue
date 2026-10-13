@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import type { Component } from 'vue';
 import { Cake, Coffee, Flag, Heart, Pencil, Pin, Trash2 } from '@lucide/vue';
 import IconTile from '@/components/common/IconTile.vue';
 import type { IconTileTone } from '@/components/common/IconTile.vue';
+import { useSwipeActions } from '@/composables/useSwipeActions';
 import type { AnniversaryCategory } from '@/types/database';
 import type { AnniversaryView } from '@/composables/useAnniversaries';
 import { formatMonthDay, weekdayLabel } from '@/utils/date';
@@ -54,57 +55,22 @@ const daysDisplay = computed(() => {
 });
 
 // ---------------------------------------------------------------- 左滑操作
+// 手势逻辑统一由 useSwipeActions 提供（原为 4 处逐行重复的实现）
 
-const ACTION_WIDTH = 144;
-const offsetX = ref(0);
-const settling = ref(false);
-
-let startX = 0;
-let startY = 0;
-let baseOffset = 0;
-let direction: 'unknown' | 'horizontal' | 'vertical' = 'unknown';
-
-function onTouchStart(e: TouchEvent): void {
-  const touch = e.touches[0];
-  if (!touch) return;
-  startX = touch.clientX;
-  startY = touch.clientY;
-  baseOffset = offsetX.value;
-  direction = 'unknown';
-  settling.value = false;
-}
-
-function onTouchMove(e: TouchEvent): void {
-  const touch = e.touches[0];
-  if (!touch) return;
-  const dx = touch.clientX - startX;
-  const dy = touch.clientY - startY;
-  if (direction === 'unknown') {
-    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-      direction = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
-    }
-    return;
-  }
-  if (direction !== 'horizontal') return;
-  if (e.cancelable) e.preventDefault();
-  offsetX.value = Math.min(0, Math.max(-ACTION_WIDTH, baseOffset + dx));
-}
-
-function onTouchEnd(): void {
-  if (direction !== 'horizontal') return;
-  settling.value = true;
-  offsetX.value = offsetX.value < -70 ? -ACTION_WIDTH : 0;
-}
+const {
+  offsetX,
+  settling,
+  close: closeActions,
+  handlers: swipeHandlers,
+} = useSwipeActions({ actionWidth: 144, snapThreshold: 70 });
 
 function onEdit(): void {
-  settling.value = true;
-  offsetX.value = 0;
+  closeActions();
   emit('edit');
 }
 
 function onRemove(): void {
-  settling.value = true;
-  offsetX.value = 0;
+  closeActions();
   emit('remove');
 }
 </script>
@@ -136,10 +102,7 @@ function onRemove(): void {
       class="relative flex touch-pan-y items-center gap-3 rounded-2xl border border-separator bg-card p-3.5 card-glow"
       :class="settling ? 'transition-transform duration-300 ease-out-quart' : ''"
       :style="{ transform: `translateX(${offsetX}px)` }"
-      @touchstart.passive="onTouchStart"
-      @touchmove="onTouchMove"
-      @touchend="onTouchEnd"
-      @touchcancel="onTouchEnd"
+      v-on="swipeHandlers"
     >
       <IconTile :tone="meta.tone">
         <component :is="meta.icon" :size="20" :stroke-width="1.8" />

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { Droplets, Pencil, Trash2 } from '@lucide/vue';
 import AppButton from '@/components/common/AppButton.vue';
 import IconTile from '@/components/common/IconTile.vue';
+import { useSwipeActions } from '@/composables/useSwipeActions';
 import type { PeriodCycle } from '@/types/database';
 import { daysBetween, formatMonthDay, weekdayLabel } from '@/utils/date';
 
@@ -47,59 +48,43 @@ const subline = computed(() => {
 });
 
 // ---------------------------------------------------------------- 左滑操作
+// 手势逻辑统一由 useSwipeActions 提供（原为 4 处逐行重复的实现）。
+// 伴侣视角（readonly）不得响应手势，故在事件层做守卫而不只是隐藏按钮——
+// 否则仍可滑出操作区，出现「能滑但按钮无效」的困惑体验。
 
-const ACTION_WIDTH = 144;
-const offsetX = ref(0);
-const settling = ref(false);
+const {
+  offsetX,
+  settling,
+  close: closeActions,
+  handlers: swipeHandlers,
+} = useSwipeActions({ actionWidth: 144, snapThreshold: 70 });
 
-let startX = 0;
-let startY = 0;
-let baseOffset = 0;
-let direction: 'unknown' | 'horizontal' | 'vertical' = 'unknown';
-
-function onTouchStart(e: TouchEvent): void {
-  if (props.readonly) return;
-  const touch = e.touches[0];
-  if (!touch) return;
-  startX = touch.clientX;
-  startY = touch.clientY;
-  baseOffset = offsetX.value;
-  direction = 'unknown';
-  settling.value = false;
-}
-
-function onTouchMove(e: TouchEvent): void {
-  if (props.readonly) return;
-  const touch = e.touches[0];
-  if (!touch) return;
-  const dx = touch.clientX - startX;
-  const dy = touch.clientY - startY;
-  if (direction === 'unknown') {
-    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-      direction = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
-    }
-    return;
-  }
-  if (direction !== 'horizontal') return;
-  if (e.cancelable) e.preventDefault();
-  offsetX.value = Math.min(0, Math.max(-ACTION_WIDTH, baseOffset + dx));
-}
-
-function onTouchEnd(): void {
-  if (props.readonly || direction !== 'horizontal') return;
-  settling.value = true;
-  offsetX.value = offsetX.value < -70 ? -ACTION_WIDTH : 0;
-}
+const guardedHandlers = {
+  onPointerdown: (e: PointerEvent): void => {
+    if (props.readonly) return;
+    swipeHandlers.onPointerdown(e);
+  },
+  onPointermove: (e: PointerEvent): void => {
+    if (props.readonly) return;
+    swipeHandlers.onPointermove(e);
+  },
+  onPointerup: (e: PointerEvent): void => {
+    if (props.readonly) return;
+    swipeHandlers.onPointerup(e);
+  },
+  onPointercancel: (e: PointerEvent): void => {
+    if (props.readonly) return;
+    swipeHandlers.onPointercancel(e);
+  },
+};
 
 function onEdit(): void {
-  settling.value = true;
-  offsetX.value = 0;
+  closeActions();
   emit('edit');
 }
 
 function onRemove(): void {
-  settling.value = true;
-  offsetX.value = 0;
+  closeActions();
   emit('remove');
 }
 </script>
@@ -129,10 +114,7 @@ function onRemove(): void {
       class="relative flex touch-pan-y items-center gap-3 rounded-2xl border border-separator bg-card-2 p-3.5 card-glow"
       :class="settling ? 'transition-transform duration-300 ease-out-quart' : ''"
       :style="{ transform: `translateX(${offsetX}px)` }"
-      @touchstart.passive="onTouchStart"
-      @touchmove="onTouchMove"
-      @touchend="onTouchEnd"
-      @touchcancel="onTouchEnd"
+      v-on="guardedHandlers"
     >
       <IconTile tone="rose">
         <Droplets :size="20" :stroke-width="1.8" />

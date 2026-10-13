@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { Check, Pencil, Trash2 } from '@lucide/vue';
 import type { Wish, WishCategory } from '@/types/database';
+import { useSwipeActions } from '@/composables/useSwipeActions';
 import { formatMonthDay } from '@/utils/date';
 
 /**
@@ -36,51 +37,22 @@ const fulfilledDate = computed(() =>
 );
 
 // ---------------------------------------------------------------- 左滑操作
+// 手势逻辑统一由 useSwipeActions 提供（原为 4 处逐行重复的实现）
 
-const ACTION_WIDTH = 144;
-const offsetX = ref(0);
-const settling = ref(false);
+const {
+  offsetX,
+  settling,
+  close: closeActions,
+  handlers: swipeHandlers,
+} = useSwipeActions({ actionWidth: 144, snapThreshold: 70 });
 
-let startX = 0;
-let startY = 0;
-let baseOffset = 0;
-let direction: 'unknown' | 'horizontal' | 'vertical' = 'unknown';
-
-function onTouchStart(e: TouchEvent): void {
-  const touch = e.touches[0];
-  if (!touch) return;
-  startX = touch.clientX;
-  startY = touch.clientY;
-  baseOffset = offsetX.value;
-  direction = 'unknown';
-  settling.value = false;
-}
-
-function onTouchMove(e: TouchEvent): void {
-  const touch = e.touches[0];
-  if (!touch) return;
-  const dx = touch.clientX - startX;
-  const dy = touch.clientY - startY;
-  if (direction === 'unknown') {
-    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-      direction = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
-    }
-    return;
-  }
-  if (direction !== 'horizontal') return;
-  if (e.cancelable) e.preventDefault();
-  offsetX.value = Math.min(0, Math.max(-ACTION_WIDTH, baseOffset + dx));
-}
-
-function onTouchEnd(): void {
-  if (direction !== 'horizontal') return;
-  settling.value = true;
-  offsetX.value = offsetX.value < -70 ? -ACTION_WIDTH : 0;
+function onAttachPhoto(): void {
+  closeActions();
+  emit('attachPhoto');
 }
 
 function onRemove(): void {
-  settling.value = true;
-  offsetX.value = 0;
+  closeActions();
   emit('remove');
 }
 </script>
@@ -93,13 +65,7 @@ function onRemove(): void {
         type="button"
         class="flex flex-1 items-center justify-center bg-serene/15 text-serene"
         aria-label="补充照片"
-        @click="
-          () => {
-            settling = true;
-            offsetX = 0;
-            emit('attachPhoto');
-          }
-        "
+        @click="onAttachPhoto"
       >
         <Pencil :size="17" :stroke-width="2" />
       </button>
@@ -117,10 +83,7 @@ function onRemove(): void {
       class="relative touch-pan-y rounded-2xl border border-separator bg-card-2 p-3.5 card-glow"
       :class="settling ? 'transition-transform duration-300 ease-out-quart' : ''"
       :style="{ transform: `translateX(${offsetX}px)` }"
-      @touchstart.passive="onTouchStart"
-      @touchmove="onTouchMove"
-      @touchend="onTouchEnd"
-      @touchcancel="onTouchEnd"
+      v-on="swipeHandlers"
     >
       <!-- 已达成：宝丽来足迹 -->
       <template v-if="wish.is_fulfilled">

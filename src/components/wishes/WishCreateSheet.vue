@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onUnmounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import AppButton from '@/components/common/AppButton.vue';
+import { useKeyboardAvoid } from '@/composables/useKeyboardAvoid';
 import type { WishCategory } from '@/types/database';
 
 /**
@@ -57,29 +58,9 @@ function pillClass(active: boolean): string {
 }
 
 // ---------------------------------------------------------------- 键盘避让
+// 逻辑统一由 useKeyboardAvoid 提供（原为 6 处逐行重复的实现）
 
-const keyboardOffset = ref(0);
-
-function onViewportResize(): void {
-  const vv = window.visualViewport;
-  keyboardOffset.value = vv ? Math.max(0, window.innerHeight - vv.height) : 0;
-}
-
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      window.visualViewport?.addEventListener('resize', onViewportResize);
-    } else {
-      window.visualViewport?.removeEventListener('resize', onViewportResize);
-      keyboardOffset.value = 0;
-    }
-  },
-);
-
-onUnmounted(() => {
-  window.visualViewport?.removeEventListener('resize', onViewportResize);
-});
+const keyboardOffset = useKeyboardAvoid(computed(() => props.open));
 </script>
 
 <template>

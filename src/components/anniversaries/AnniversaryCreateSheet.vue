@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { Cake, Coffee, Flag, Heart } from '@lucide/vue';
 import AppButton from '@/components/common/AppButton.vue';
+import { useKeyboardAvoid } from '@/composables/useKeyboardAvoid';
 import type { Anniversary, AnniversaryCategory } from '@/types/database';
 import { lunarToSolar } from '@/utils/lunar';
 
@@ -10,7 +11,7 @@ import { lunarToSolar } from '@/utils/lunar';
  * AnniversaryCreateSheet — 纪念日创建/编辑抽屉
  * 支持公历/农历一键切换：农历模式下选择的日期按"农历月日"解释，
  * 提交时换算为公历存储（is_lunar=true 供后续逐年重算）。
- * 键盘避让：visualViewport 监听动态抬高。
+ * 键盘避让：useKeyboardAvoid composable（6 处抽屉共用，监听 visualViewport 变化）。
  */
 export interface AnniversaryFormPayload {
   title: string;
@@ -87,29 +88,9 @@ function onSubmit(): void {
 }
 
 // ---------------------------------------------------------------- 键盘避让
+// 逻辑统一由 useKeyboardAvoid 提供（原为 6 处逐行重复的实现）
 
-const keyboardOffset = ref(0);
-
-function onViewportResize(): void {
-  const vv = window.visualViewport;
-  keyboardOffset.value = vv ? Math.max(0, window.innerHeight - vv.height) : 0;
-}
-
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      window.visualViewport?.addEventListener('resize', onViewportResize);
-    } else {
-      window.visualViewport?.removeEventListener('resize', onViewportResize);
-      keyboardOffset.value = 0;
-    }
-  },
-);
-
-onUnmounted(() => {
-  window.visualViewport?.removeEventListener('resize', onViewportResize);
-});
+const keyboardOffset = useKeyboardAvoid(computed(() => props.open));
 
 function pillClass(active: boolean): string {
   return active

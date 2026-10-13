@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import AppButton from '@/components/common/AppButton.vue';
 import type { RecurrenceRule, Todo, TodoCategory, TodoPriority } from '@/types/database';
 import {
@@ -8,14 +8,15 @@ import {
   nowInTimezone,
   weekdayIndexOfDate,
 } from '@/utils/date';
+import { useKeyboardAvoid } from '@/composables/useKeyboardAvoid';
 
 /**
  * TodoCreateSheet — 任务快速创建/编辑半屏抽屉
  *
  * - Teleport 挂载，300ms 弹簧滑入 + 柔和遮罩；
  * - 录入项：标题、备注、分类、优先级、循环规则（每周展开星期）、指定到期日、执行人；
- * - 键盘避让：监听 visualViewport 变化动态抬高抽屉，杜绝 iOS Safari
- *   虚拟键盘遮挡输入框（viewport 另已声明 interactive-widget=resizes-content）。
+ * - 键盘避让：useKeyboardAvoid composable（6 处抽屉共用，监听 visualViewport
+ *   变化动态抬高抽屉），杜绝 iOS Safari 虚拟键盘遮挡输入框。
  */
 
 export interface TodoFormPayload {
@@ -124,29 +125,9 @@ function onSubmit(): void {
 }
 
 // ---------------------------------------------------------------- 键盘避让
+// 逻辑统一由 useKeyboardAvoid 提供（原为 6 处逐行重复的实现）
 
-const keyboardOffset = ref(0);
-
-function onViewportResize(): void {
-  const vv = window.visualViewport;
-  keyboardOffset.value = vv ? Math.max(0, window.innerHeight - vv.height) : 0;
-}
-
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      window.visualViewport?.addEventListener('resize', onViewportResize);
-    } else {
-      window.visualViewport?.removeEventListener('resize', onViewportResize);
-      keyboardOffset.value = 0;
-    }
-  },
-);
-
-onUnmounted(() => {
-  window.visualViewport?.removeEventListener('resize', onViewportResize);
-});
+const keyboardOffset = useKeyboardAvoid(computed(() => props.open));
 
 function pillClass(active: boolean): string {
   return active

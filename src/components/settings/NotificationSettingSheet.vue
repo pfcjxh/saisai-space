@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, toRef, watch } from 'vue';
+import { computed, ref, toRef, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { Bell, BellOff, LogOut, Send, Smartphone } from '@lucide/vue';
 import AppBadge from '@/components/common/AppBadge.vue';
 import AppButton from '@/components/common/AppButton.vue';
+import { useKeyboardAvoid } from '@/composables/useKeyboardAvoid';
 import { useWebPush } from '@/composables/useWebPush';
 import { useAuthStore } from '@/stores/auth';
 import { useCoupleStore } from '@/stores/couple';
@@ -128,28 +129,10 @@ async function onToggle(key: keyof NotifyPrefsState): Promise<void> {
   emit('togglePref', key);
 }
 
-const keyboardOffset = ref(0);
+// ---------------------------------------------------------------- 键盘避让
+// 逻辑统一由 useKeyboardAvoid 提供（原为 6 处逐行重复的实现）
 
-function onViewportResize(): void {
-  const vv = window.visualViewport;
-  keyboardOffset.value = vv ? Math.max(0, window.innerHeight - vv.height) : 0;
-}
-
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      window.visualViewport?.addEventListener('resize', onViewportResize);
-    } else {
-      window.visualViewport?.removeEventListener('resize', onViewportResize);
-      keyboardOffset.value = 0;
-    }
-  },
-);
-
-onUnmounted(() => {
-  window.visualViewport?.removeEventListener('resize', onViewportResize);
-});
+const keyboardOffset = useKeyboardAvoid(computed(() => props.open));
 </script>
 
 <template>

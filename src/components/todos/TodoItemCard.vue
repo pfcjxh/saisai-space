@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { Check, Pencil, Trash2 } from '@lucide/vue';
 import AppBadge from '@/components/common/AppBadge.vue';
+import { useSwipeActions } from '@/composables/useSwipeActions';
 import type { Todo, TodoCategory } from '@/types/database';
 import {
   DEFAULT_TIMEZONE,
@@ -100,52 +101,16 @@ const assigneeMeta = computed(() => ASSIGNEE_META[props.assignee]);
 
 // ---------------------------------------------------------------- 左滑操作
 
-const ACTION_WIDTH = 144;
-const offsetX = ref(0);
-const settling = ref(false);
-
-let startX = 0;
-let startY = 0;
-let baseOffset = 0;
-let direction: 'unknown' | 'horizontal' | 'vertical' = 'unknown';
-
-function onTouchStart(e: TouchEvent): void {
-  const touch = e.touches[0];
-  if (!touch) return;
-  startX = touch.clientX;
-  startY = touch.clientY;
-  baseOffset = offsetX.value;
-  direction = 'unknown';
-  settling.value = false;
-}
-
-function onTouchMove(e: TouchEvent): void {
-  const touch = e.touches[0];
-  if (!touch) return;
-  const dx = touch.clientX - startX;
-  const dy = touch.clientY - startY;
-
-  if (direction === 'unknown') {
-    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-      direction = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
-    }
-    return;
-  }
-  if (direction !== 'horizontal') return;
-  if (e.cancelable) e.preventDefault();
-  offsetX.value = Math.min(0, Math.max(-ACTION_WIDTH, baseOffset + dx));
-}
-
-function onTouchEnd(): void {
-  if (direction !== 'horizontal') return;
-  settling.value = true;
-  offsetX.value = offsetX.value < -70 ? -ACTION_WIDTH : 0;
-}
-
-function closeActions(): void {
-  settling.value = true;
-  offsetX.value = 0;
-}
+/**
+ * 手势逻辑统一由 useSwipeActions 提供（此前本组件与其他 3 处各自维护一份
+ * 逐行相同的实现）。改为 Pointer Events 后，桌面端也可直接拖动验证。
+ */
+const {
+  offsetX,
+  settling,
+  close: closeActions,
+  handlers: swipeHandlers,
+} = useSwipeActions({ actionWidth: 144, snapThreshold: 70 });
 
 function onEdit(): void {
   closeActions();
@@ -185,10 +150,7 @@ function onRemove(): void {
       class="relative flex touch-pan-y items-center gap-3 rounded-2xl border border-separator bg-card-2 p-3 card-glow"
       :class="settling ? 'transition-transform duration-300 ease-out-quart' : ''"
       :style="{ transform: `translateX(${offsetX}px)` }"
-      @touchstart.passive="onTouchStart"
-      @touchmove="onTouchMove"
-      @touchend="onTouchEnd"
-      @touchcancel="onTouchEnd"
+      v-on="swipeHandlers"
     >
       <!-- 大圆勾选框 -->
       <button
