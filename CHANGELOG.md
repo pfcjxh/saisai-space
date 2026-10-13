@@ -16,6 +16,11 @@
 | `checkpoint-3-timezone` | `60a52f8` | 时区统一：消灭三套写法与硬编码东八区 |
 | `checkpoint-4-borrowed` | `e56acd7` | 借鉴落地：离线快照身份隔离 + 全局错误兜底 |
 | `checkpoint-5-cleanup` | `de3a788` | 清理死代码 + 接上被遗漏的里程碑卡 |
+| `checkpoint-6-final` | `cb13bff` | 交付文档 CHANGELOG.md + 回退指引 |
+| `checkpoint-7-realtime` | `00084cc` | Realtime 回环抑制（在途写入追踪 + 乐观更新防覆盖） |
+| `checkpoint-8-dedup-rls` | `31c3327` | 左滑/键盘避让去重 + RLS `(select auth.uid())` 性能迁移（已落生产） |
+
+> `checkpoint-8` 起为第二轮深化工作，六个保存点均基于 `checkpoint-6` 之后追加。
 
 ---
 
@@ -126,6 +131,10 @@ npm run build            # 生产构建（沙箱下需先设 TEMP，见下）
 npm run test:date        # 时区测试（单时区，22 项断言）
 npm run test:date:all-tz # 时区测试跨 6 时区（132 项断言）
 npm run preview          # 本地预览构建产物
+node --experimental-strip-types tests/inflight.check.ts  # 在途写入 28 项断言
+node scripts/verify-rls-semantics.mjs                    # 线上 RLS 语义 19 项断言
+node scripts/apply-migration.mjs --file <迁移.sql>        # 事务内应用迁移
+node scripts/supabase-sql.mjs "select 1"                  # 直连生产库执行 SQL
 ```
 
 **构建环境注意**：若在受限沙箱下构建，esbuild 需要可删除的临时目录，先执行：
@@ -136,18 +145,37 @@ $env:TEMP = Join-Path $PWD '.tmp-build'; $env:TMP = $env:TEMP
 
 `.tmp-build/` 已在 `.gitignore` 中。
 
-**本轮最终验证结果**：
-- `typecheck` 通过
-- `build` 通过（precache 45 项）
+**本机网络限制**：`*.supabase.co`（项目域名）的 TLS 握手被网络层重置，
+但 `api.supabase.com`（管理 API）与数据库端口可达。因此：
+- 迁移、SQL、密钥轮换走 `scripts/supabase-sql.mjs`（管理 API 通道）；
+- `tests/rls-penetration.mjs` 依赖公网访问项目域名，**本机无法运行**，
+  改用 `scripts/verify-rls-semantics.mjs` 在同一连接内切身份断言。
+
+**当前验证结果**：
+- `typecheck` 通过；`build` 通过（precache 45 项）
 - 时区测试 6 时区 × 22 项 = **132 项全绿**
-- 无头 Chrome 实测 6 条路由（`/today` `/auth` `/together` `/diary` `/wishes` `/cycle`）**全部渲染成功、零运行时错误**
-- 今日页 11 项关键元素全部命中，含新接入的里程碑倒数卡
+- 在途写入测试 **28 项全绿**
+- 线上 RLS 语义验证 **17/19 通过**（余 2 项 = 待办的推送密钥迁移）
+- 无头 Chrome 实测线上 `https://saisai-pp-space.pages.dev`：今日页 **11/11 命中，零运行时错误**
+- 前端已部署至 Cloudflare Pages 生产环境
 
 ---
 
 ## 五、遗留事项（未在本轮处理）
 
-1. **凭据轮换**：`service_role`、Supabase access token、Cloudflare token 需你手动轮换（见 [SECURITY.md](SECURITY.md)）。
-2. **线上库迁移**：`0009` 轮换迁移尚未应用（网络不可达），需执行 `supabase db push`。
-3. **`QuickTodoCard`** 去留待决策。
+1. **推送密钥轮换（唯一阻塞项）**：DB 侧函数 `notify_diary_push` 与 cron 任务
+   `daily-check-push` 仍含已泄漏的明文密钥；Vault 已建好但尚未写入值。
+   需要令牌具备 **Edge Functions** 权限（`edge_functions_secrets_write` +
+   `edge_functions_secrets_read` + `edge_functions_read`），之后一条命令即可完成：
+   ```bash
+   node scripts/supabase-sql.mjs --file supabase/migrations/20260916000900_rotate_push_webhook_secret.sql
+   ```
+   当前令牌仅有 `database` 写权限（`api.supabase.com/v1/projects/<ref>/database/query`
+   返回 201），Functions/Secrets 端点均 403。授权方式：Access Tokens 页 →
+   `saisai2` 那一行的 ⋮ → Edit → 勾选 Edge Functions 相关权限。
+2. **凭据轮换**：`service_role`、Supabase access token、Cloudflare token 建议轮换
+   （见 [SECURITY.md](SECURITY.md)）。你已表示暂不处理，此处仅作记录。
+3. **`QuickTodoCard`** 去留待决策（首页当前不展示待办速览）。
+4. **调研报告中未落地的借鉴项**：Playwright E2E 骨架、月历网格 ×2 去重、
+   弹层 CSS ×13 收敛为单一 `<BaseSheet>`。
 4. 调研报告中的其余借鉴项（Realtime 回环抑制、VueUse 去重左滑/键盘避让、Playwright E2E、RLS 的 `(select auth.uid())` 性能写法）尚未落地，可作为后续迭代。
