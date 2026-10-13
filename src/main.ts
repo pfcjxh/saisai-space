@@ -5,6 +5,7 @@ import { router } from './router';
 import { useAppStore } from './stores/app';
 import { initTheme } from '@/composables/useTheme';
 import { reportError } from '@/utils/errors';
+import { registerSW } from 'virtual:pwa-register';
 import './styles/main.css';
 
 const app = createApp(App);
@@ -55,3 +56,22 @@ useAppStore().bindNetworkListeners();
 initTheme();
 
 app.mount('#app');
+
+// ---------------------------------------------------------------- 版本自动更新
+//
+// 修复（用户反馈「生理期用不了 / 天气改不了」的真因之一）：
+// vite.config.ts 配了 registerType: 'autoUpdate'，但本项目**从未导入
+// virtual:pwa-register**——index.html 里注入的 registerSW.js 只是最朴素的
+// `navigator.serviceWorker.register(...)`，不含任何更新检测。结果：
+// 新版本部署后 Service Worker 虽在后台更新成功，已打开的页面**不会重载**，
+// 用户手机长期停留在旧 bundle（旧版生理期页对伴侣视角是只读的，
+// 于是「点开生理期没有办法记录」——功能其实早已上线，只是没送达）。
+//
+// 现在显式注册并启用自动更新：检测到新版本即自动 skipWaiting 并重载一次。
+// 重载用定时器错开，避免与首屏挂载竞争。
+registerSW({
+  immediate: true,
+  onNeedRefresh() {
+    window.setTimeout(() => window.location.reload(), 800);
+  },
+});

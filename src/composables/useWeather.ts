@@ -40,8 +40,12 @@ const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
   佛山: { lat: 23.0215, lon: 113.1214 },
   珠海: { lat: 22.2707, lon: 113.5767 },
   惠州: { lat: 23.1115, lon: 114.4162 },
-  // 山东（她家在莱阳，在山东上学）
+  // 山东（她家莱阳，上学在海阳）
   莱阳: { lat: 36.9789, lon: 120.7117 },
+  // 海阳：必须内置。Open-Meteo 地理编码搜「海阳」只会返回**安徽**海阳
+  // （黄山市，29.79N/118.18E），用它查山东的天气会得到完全错误的数据。
+  // 这里的坐标取山东海阳市区（市政府，东村街道）。
+  海阳: { lat: 36.7761, lon: 121.1587 },
   青岛: { lat: 36.0671, lon: 120.3826 },
   烟台: { lat: 37.4638, lon: 121.4479 },
   济南: { lat: 36.6512, lon: 117.1201 },
@@ -74,7 +78,7 @@ const CITY_COORDS: Record<string, { lat: number; lon: number }> = {
  */
 export const CITY_GROUPS: { label: string; cities: string[] }[] = [
   { label: '广东', cities: ['深圳', '广州', '东莞', '佛山', '珠海', '惠州'] },
-  { label: '山东', cities: ['莱阳', '青岛', '烟台', '济南', '潍坊', '威海', '临沂'] },
+  { label: '山东', cities: ['海阳', '莱阳', '青岛', '烟台', '济南', '潍坊', '威海', '临沂'] },
   {
     label: '其他',
     cities: [
@@ -100,11 +104,17 @@ interface GeoResult {
   latitude?: number;
   longitude?: number;
   name?: string;
+  admin1?: string;
+  country?: string;
 }
 
 /**
  * 解析城市坐标：先查内置字典与缓存，未命中则调用 Open-Meteo 地理编码。
  * 这样用户可以填写**任意**城市名（含县级市），不受内置列表限制。
+ *
+ * 重名城市兜底：国内重名很常见（「海阳」有安徽/山东两个，「朝阳」有辽宁/吉林/
+ * 北京三个）。这个空间的两位用户在山东，因此地理编码在多个候选里**优先取
+ * 山东省的结果**，避免把山东的海阳解析成安徽的海阳而显示完全错误的天气。
  */
 async function resolveCoords(city: string): Promise<{ lat: number; lon: number } | null> {
   const name = city.trim();
@@ -133,14 +143,21 @@ async function resolveCoords(city: string): Promise<{ lat: number; lon: number }
   try {
     const url =
       `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}` +
-      `&count=1&language=zh&format=json`;
+      `&count=8&language=zh&format=json`;
     const res = await fetch(url);
     if (!res.ok) return null;
     const json = (await res.json()) as { results?: GeoResult[] };
-    const hit = json.results?.[0];
-    if (!hit || typeof hit.latitude !== 'number' || typeof hit.longitude !== 'number') {
-      return null;
-    }
+    const candidates = (json.results ?? []).filter(
+      (r): r is GeoResult & { latitude: number; longitude: number } =>
+        typeof r.latitude === 'number' && typeof r.longitude === 'number',
+    );
+    if (candidates.length === 0) return null;
+    // 优先山东，其次任意中国结果，最后退回地理编码自己的排序
+    const hit =
+      candidates.find((r) => r.admin1 === '山东省' && r.country === '中国') ??
+      candidates.find((r) => r.country === '中国') ??
+      candidates[0];
+    if (!hit) return null;
     const coords = { lat: hit.latitude, lon: hit.longitude };
     geoMemory.set(name, coords);
     try {
