@@ -7,6 +7,7 @@ import PullToRefresh from '@/components/layout/PullToRefresh.vue';
 import GreetingHeader from '@/components/dashboard/GreetingHeader.vue';
 import PeriodCareCard from '@/components/dashboard/PeriodCareCard.vue';
 import WeatherCard from '@/components/dashboard/WeatherCard.vue';
+import UpcomingMilestoneCard from '@/components/dashboard/UpcomingMilestoneCard.vue';
 import MoodPickerSheet from '@/components/dashboard/MoodPickerSheet.vue';
 import NotificationSettingSheet from '@/components/settings/NotificationSettingSheet.vue';
 import ThemeSettingSheet from '@/components/settings/ThemeSettingSheet.vue';
@@ -15,6 +16,7 @@ import type { NotifyPrefsState } from '@/components/settings/NotificationSetting
 import { fetchProfile, updateMood } from '@/services/profileService';
 import { updateNotifyPrefs } from '@/services/pushService';
 import { fetchCoupleContext } from '@/services/coupleService';
+import { listAnniversaries } from '@/services/anniversaryService';
 import { listRecentCycles } from '@/services/periodService';
 import { usePeriodCalculator } from '@/composables/usePeriodCalculator';
 import { readSnapshot, saveSnapshot, withTimeout } from '@/services/offlineStorage';
@@ -25,7 +27,7 @@ import {
   hourInTimezone,
   todayInTimezone,
 } from '@/utils/date';
-import type { Couple, Mood, PeriodCycle, Profile } from '@/types/database';
+import type { Anniversary, Couple, Mood, PeriodCycle, Profile } from '@/types/database';
 
 defineOptions({ name: 'TodayView' });
 
@@ -38,6 +40,8 @@ const me = ref<Profile | null>(null);
 const partner = ref<Profile | null>(null);
 const couple = ref<Couple | null>(null);
 const cycles = ref<PeriodCycle[]>([]);
+/** 纪念日：供里程碑倒数卡消费（pinned 置顶项优先） */
+const anniversaries = ref<Anniversary[]>([]);
 /** true = 未登录/未配对/查询失败时的 Mock 兜底模式 */
 const isMock = ref(false);
 const moodOpen = ref(false);
@@ -84,6 +88,7 @@ function applyMock(realProfile?: Profile | null): void {
   partner.value = mock.partner;
   couple.value = mock.couple;
   cycles.value = mock.cycles;
+  anniversaries.value = mock.anniversaries;
   isMock.value = true;
 }
 
@@ -93,6 +98,7 @@ interface DashboardSnapshot {
   partner: Profile | null;
   couple: Couple | null;
   cycles: PeriodCycle[];
+  anniversaries?: Anniversary[];
 }
 
 async function loadDashboard(): Promise<void> {
@@ -119,8 +125,11 @@ async function loadDashboard(): Promise<void> {
 
     // 生理期数据归属：男性视角读伴侣（RLS 仅放行基础周期统计），否则读本人
     const periodOwnerId = profile?.gender === 'male' ? context.partner.id : user.id;
-    const [cycleList] = await withTimeout(Promise.all([listRecentCycles(periodOwnerId)]));
+    const [cycleList, anniversaryList] = await withTimeout(
+      Promise.all([listRecentCycles(periodOwnerId), listAnniversaries(context.couple.id)]),
+    );
     cycles.value = cycleList;
+    anniversaries.value = anniversaryList;
 
     // 成功即写入本地快照，供离线/弱网回退
     void saveSnapshot<DashboardSnapshot>('cached_today_dashboard', {
@@ -128,6 +137,7 @@ async function loadDashboard(): Promise<void> {
       partner: partner.value,
       couple: couple.value,
       cycles: cycleList,
+      anniversaries: anniversaryList,
     }).catch(() => undefined);
   } catch {
     // 优先回退本地快照；无快照才降级 Mock，绝不让仪表盘白屏
@@ -139,6 +149,7 @@ async function loadDashboard(): Promise<void> {
       partner.value = snapshot.data.partner;
       couple.value = snapshot.data.couple;
       cycles.value = snapshot.data.cycles;
+      anniversaries.value = snapshot.data.anniversaries ?? [];
       isMock.value = false;
       return;
     }
@@ -225,7 +236,7 @@ onMounted(loadDashboard);
         @open-share-card="shareOpen = true"
       />
 
-      <!-- 聚焦卡片流：天气 → 生理期 -->
+      <!-- 聚焦卡片流：天气 → 里程碑 → 生理期 -->
       <WeatherCard
         ref="weatherRef"
         :my-city="me?.weather_city ?? '深圳'"
@@ -235,6 +246,8 @@ onMounted(loadDashboard);
         :partner-lat="partner?.weather_lat ?? null"
         :partner-lon="partner?.weather_lon ?? null"
       />
+      <!-- 最近里程碑倒数：消费纪念日的 pinned 字段（置顶项优先） -->
+      <UpcomingMilestoneCard :anniversaries="anniversaries" :today="today" />
       <PeriodCareCard
         :insight="insight"
         :partner-view="partnerView"

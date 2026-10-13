@@ -41,20 +41,6 @@ export async function listTodos(coupleId: string): Promise<Todo[]> {
   return data ?? [];
 }
 
-/** 首页速览：未完成 + 到期升序（无到期排后），默认前 2 条 */
-export async function listPendingTodos(coupleId: string, limit = 2): Promise<Todo[]> {
-  const { data, error } = await supabase
-    .from('todos')
-    .select('*')
-    .eq('couple_id', coupleId)
-    .eq('is_completed', false)
-    .order('due_date', { ascending: true, nullsFirst: false })
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  if (error) throw error;
-  return data ?? [];
-}
-
 export async function createTodo(input: CreateTodoInput): Promise<Todo> {
   const { data, error } = await supabase.from('todos').insert(input).select().single();
   if (error) throw error;
