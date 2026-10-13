@@ -160,6 +160,55 @@ console.log('\n--- 权限收敛 ---');
   record('2.7 authenticated 无权调用密钥读取函数', r.data?.[0]?.auth_can === false);
 }
 
+// ---------------------------------------------------------------- 真实日记触发器路径
+
+console.log('\n--- 真实日记路径（INSERT diaries -> 触发器 -> 推送）---');
+{
+  const before = await sql(`select coalesce(max(id), 0)::bigint as max_id from net._http_response`);
+  const maxId = Number(before.data?.[0]?.max_id ?? 0);
+
+  // 取一个真实已配对的空间，以其成员身份插入日记（postgres 身份绕过 RLS）
+  const ins = await sql(`
+    WITH pair AS (
+      SELECT cm1.couple_id, cm1.user_id AS author
+      FROM public.couple_members cm1
+      JOIN public.couple_members cm2
+        ON cm1.couple_id = cm2.couple_id AND cm1.user_id <> cm2.user_id
+      LIMIT 1
+    )
+    INSERT INTO public.diaries (couple_id, author_id, diary_date, title, content, images)
+    SELECT couple_id, author, '2026-10-14',
+           '推送链路验证（脚本自动清理）',
+           '验证 INSERT 触发器是否以新密钥发出请求', '[]'::jsonb
+    FROM pair
+    RETURNING id
+  `);
+  const diaryId = ins.data?.[0]?.id;
+
+  if (!diaryId) {
+    // 没有已配对空间时无法验证该路径（不算失败，明确标注）
+    console.log('  ⚠️ 库中无已配对空间，跳过触发器路径验证');
+  } else {
+    let status = null;
+    for (let i = 0; i < 25; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const res = await sql(
+        `select status_code from net._http_response where id > ${maxId} order by id desc limit 1`,
+      );
+      if (res.data?.[0]) {
+        status = res.data[0].status_code;
+        break;
+      }
+    }
+    console.log(`  日记触发推送 -> HTTP ${status}`);
+    record('3.1 写日记触发推送且鉴权通过', status === 200, `HTTP ${status}`);
+
+    // 清理测试数据
+    await sql(`delete from public.diaries where id = '${diaryId}'`);
+    console.log('  测试日记已清理');
+  }
+}
+
 // ---------------------------------------------------------------- 汇总
 
 console.log(`\n================ 结果: ${passed} 项通过, ${failed} 项失败 ================\n`);
