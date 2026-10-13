@@ -2,6 +2,12 @@
 import { nextTick, onUnmounted, ref, watch } from 'vue';
 import AppButton from '@/components/common/AppButton.vue';
 import type { RecurrenceRule, Todo, TodoCategory, TodoPriority } from '@/types/database';
+import {
+  DEFAULT_TIMEZONE,
+  formatDateInTimezone,
+  nowInTimezone,
+  weekdayIndexOfDate,
+} from '@/utils/date';
 
 /**
  * TodoCreateSheet — 任务快速创建/编辑半屏抽屉
@@ -30,6 +36,8 @@ const props = defineProps<{
   /** 传入则为编辑模式 */
   editing: Todo | null;
   editingAssignee: 'me' | 'partner' | 'both';
+  /** 用户时区：决定星期回填与「今天」基准（修复设备时区隐式依赖） */
+  timezone?: string;
 }>();
 
 const emit = defineEmits<{
@@ -83,12 +91,16 @@ watch(
     category.value = props.editing?.category ?? 'daily';
     priority.value = props.editing?.priority ?? 'normal';
     recurrence.value = props.editing?.recurrence_rule ?? 'none';
+    const tz = props.timezone ?? DEFAULT_TIMEZONE;
+    // 星期回填：先归到用户时区的日历日再取星期。
+    // 修复：原实现 new Date(due_date).getDay() 按设备时区取值（跨时区差一天），
+    // 且 specificDate 直接 slice(0,10) 取的是 UTC 日期，同样会偏一天。
     weekday.value = props.editing?.due_date
-      ? new Date(props.editing.due_date).getDay()
-      : new Date().getDay();
+      ? weekdayIndexOfDate(formatDateInTimezone(props.editing.due_date, tz))
+      : nowInTimezone(tz).weekday;
     specificDate.value =
       props.editing?.due_date && props.editing.recurrence_rule !== 'weekly'
-        ? props.editing.due_date.slice(0, 10)
+        ? formatDateInTimezone(props.editing.due_date, tz)
         : '';
     assignee.value = props.editingAssignee;
     await nextTick();

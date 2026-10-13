@@ -3,19 +3,31 @@ import { computed, ref } from 'vue';
 import { Check, Pencil, Trash2 } from '@lucide/vue';
 import AppBadge from '@/components/common/AppBadge.vue';
 import type { Todo, TodoCategory } from '@/types/database';
-import { addDays, formatMonthDay, todayInTimezone } from '@/utils/date';
+import {
+  DEFAULT_TIMEZONE,
+  daysBetween,
+  formatDateInTimezone,
+  formatMonthDay,
+  todayInTimezone,
+  weekdayIndexOfDate,
+} from '@/utils/date';
 
 /**
  * TodoItemCard — 任务卡片（参考设计：大圆勾选框 + 色点 + 淡紫循环胶囊）
  * 勾选弹簧按压 + 划线动画；左滑呼出 编辑/删除 操作。
  */
-const props = defineProps<{
-  todo: Todo;
-  /** 归属视角：me 我 / partner TA / both 共同 */
-  assignee: 'me' | 'partner' | 'both';
-  /** 正在播放完成划线动画 */
-  completing: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    todo: Todo;
+    /** 归属视角：me 我 / partner TA / both 共同 */
+    assignee: 'me' | 'partner' | 'both';
+    /** 正在播放完成划线动画 */
+    completing: boolean;
+    /** 用户时区（profiles.timezone），决定「今天/明天」的判定基准 */
+    timezone?: string;
+  }>(),
+  { timezone: DEFAULT_TIMEZONE },
+);
 
 const emit = defineEmits<{
   toggle: [];
@@ -34,33 +46,48 @@ const CATEGORY_DOT: Record<TodoCategory, string> = {
 
 const dotClass = computed(() => CATEGORY_DOT[props.todo.category]);
 
-const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'] as const;
+const WEEKDAY_NAMES = ['日', '一', '二', '三', '四', '五', '六'] as const;
 
 const recurrenceLabel = computed<string | null>(() => {
   if (props.todo.recurrence_rule === 'daily') return '每天';
   if (props.todo.recurrence_rule === 'weekly') {
     if (props.todo.due_date) {
-      return `每周${WEEKDAYS[new Date(props.todo.due_date).getDay()] ?? ''}`;
+      // 修复：原实现用 new Date(iso).getDay() 按设备时区取星期，
+      // 跨时区会显示成相邻的一天；先归到用户时区的日历日再取星期。
+      const dateStr = formatDateInTimezone(props.todo.due_date, props.timezone);
+      return `每周${WEEKDAY_NAMES[weekdayIndexOfDate(dateStr)] ?? ''}`;
     }
     return '每周';
   }
   return null;
 });
 
-/** 到期日换算为 今天 / 明天 / M月D日 */
+/** 到期日换算为 今天 / 明天 / M月D日（已过期则给出实际描述） */
 const dueLabel = computed<string | null>(() => {
   if (!props.todo.due_date) return null;
-  const d = new Date(props.todo.due_date);
-  const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const today = todayInTimezone('Asia/Shanghai');
-  if (dateStr <= today) return '今天';
-  if (dateStr === addDays(today, 1)) return '明天';
+  const dateStr = formatDateInTimezone(props.todo.due_date, props.timezone);
+  const today = todayInTimezone(props.timezone);
+  const diff = daysBetween(today, dateStr);
+  if (diff === 0) return '今天';
+  if (diff === 1) return '明天';
+  if (diff < 0) {
+    // 修复：原实现把过期项也写成「今天」，并与「已过期」前缀拼成
+    // 「已过期 · 今天」这种自相矛盾的文案。
+    return `${formatMonthDay(dateStr)}`;
+  }
   return formatMonthDay(dateStr);
 });
 
+/**
+ * 是否已过期：按用户时区的日历日比较。
+ * 修复：原实现用 `new Date(due_date).getTime() < Date.now()`，会把
+ * 「今天 12:00 到期」的任务在当天下午误判为已过期。到期日只精确到天，
+ * 因此应以日历日为准。
+ */
 const isOverdue = computed(() => {
   if (!props.todo.due_date || props.todo.is_completed) return false;
-  return new Date(props.todo.due_date).getTime() < Date.now();
+  const dateStr = formatDateInTimezone(props.todo.due_date, props.timezone);
+  return daysBetween(todayInTimezone(props.timezone), dateStr) < 0;
 });
 
 const ASSIGNEE_META = {

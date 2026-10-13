@@ -21,16 +21,30 @@ import { useLetters } from '@/composables/useLetters';
 import MemoryTimeline from '@/components/memories/MemoryTimeline.vue';
 import LetterEnvelopeOverlay from '@/components/letters/LetterEnvelopeOverlay.vue';
 import { fetchCoupleContext } from '@/services/coupleService';
-import type { Anniversary, LoveLetter, Todo } from '@/types/database';
-import { addDays, formatDateWithWeekday, todayInTimezone } from '@/utils/date';
+import { fetchProfile } from '@/services/profileService';
+import type { Anniversary, LoveLetter, Profile, Todo } from '@/types/database';
+import {
+  DEFAULT_TIMEZONE,
+  addDays,
+  formatDateInTimezone,
+  formatDateWithWeekday,
+  nowInTimezone,
+  todayInTimezone,
+  zonedTimeToUtc,
+} from '@/utils/date';
 
 defineOptions({ name: 'TogetherView' });
 
 const auth = useAuthStore();
 const coupleStore = useCoupleStore();
 
+/** 本人资料：时区来源（本页此前未加载资料，导致时区无处可取） */
+const myProfile = ref<Profile | null>(null);
+
 const coupleId = computed(() => coupleStore.coupleId);
 const myUserId = computed(() => auth.user?.id ?? null);
+/** 全页统一时区来源：本人资料时区（未加载时兜底东八区） */
+const timezone = computed(() => myProfile.value?.timezone ?? DEFAULT_TIMEZONE);
 
 const {
   todos,
@@ -67,7 +81,7 @@ const {
   applyRemoteInsert: applyRemoteAnnInsert,
   applyRemoteUpdate: applyRemoteAnnUpdate,
   applyRemoteDelete: applyRemoteAnnDelete,
-} = useAnniversaries(coupleId, myUserId);
+} = useAnniversaries(coupleId, myUserId, timezone);
 
 useAnniversariesRealtime(coupleId, {
   onInsert: applyRemoteAnnInsert,
@@ -115,16 +129,14 @@ const editingAnniversary = ref<Anniversary | null>(null);
 /** 温和提示条：待办与纪念日共享同一出口 */
 const toastMessage = computed(() => errorToast.value ?? anniversaryToast.value);
 
-const today = computed(() => todayInTimezone('Asia/Shanghai'));
+const today = computed(() => todayInTimezone(timezone.value));
 const dateLabel = computed(() => formatDateWithWeekday(today.value));
-/** 今日完成数：updated_at 落在今天的已完成任务 */
+/** 今日完成数：updated_at 换算到用户时区后落在今天 */
 const todayCompletedCount = computed(
   () =>
-    completed.value.filter((t) => {
-      const d = new Date(t.updated_at);
-      const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      return local === today.value;
-    }).length,
+    completed.value.filter(
+      (t) => formatDateInTimezone(t.updated_at, timezone.value) === today.value,
+    ).length,
 );
 
 const topOptions = [
@@ -168,9 +180,9 @@ interface TodoGroup {
   items: Todo[];
 }
 
+/** ISO 时间戳 -> 用户时区的日历日（分组用） */
 function localDateOf(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return formatDateInTimezone(iso, timezone.value);
 }
 
 const pendingGroups = computed<TodoGroup[]>(() => {
@@ -223,22 +235,22 @@ function openEdit(todo: Todo): void {
   sheetOpen.value = true;
 }
 
+/**
+ * 由表单载荷换算到期时间戳（一律按用户时区的 12:00 落库，避免跨时区偏一天）。
+ * 修复：原实现用 `new Date().getDay()` 与 `new Date(\`${date}T12:00:00\`)`，
+ * 均隐式依赖设备时区——设备非东八区时「下周三」会算错，日期存取也无法往返。
+ */
 function computeDueDate(payload: TodoFormPayload): string | null {
+  const tz = timezone.value;
   if (payload.recurrence_rule === 'weekly' && payload.weekday !== null) {
-    const now = new Date();
-    const diff = (payload.weekday - now.getDay() + 7) % 7 || 7;
-    const target = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() + diff,
-      12,
-      0,
-      0,
-    );
-    return target.toISOString();
+    const now = nowInTimezone(tz);
+    // 本周已过则该星期几顺延到下周（diff=0 表示今天 → 取 7 天后）
+    const diff = (payload.weekday - now.weekday + 7) % 7 || 7;
+    const targetDate = addDays(now.date, diff);
+    return zonedTimeToUtc(targetDate, '12:00', tz).toISOString();
   }
   if (payload.specificDate) {
-    return new Date(`${payload.specificDate}T12:00:00`).toISOString();
+    return zonedTimeToUtc(payload.specificDate, '12:00', tz).toISOString();
   }
   return null;
 }
@@ -320,6 +332,14 @@ function onFabClick(): void {
 // ---------------------------------------------------------------- 装载
 
 onMounted(async () => {
+  // 本人资料：为时区提供来源（未登录时保持 Mock 兜底）
+  if (auth.user && !myProfile.value) {
+    try {
+      myProfile.value = await fetchProfile(auth.user.id);
+    } catch {
+      // 离线时沿用兜底时区
+    }
+  }
   // 已登录但尚未加载空间上下文（如直接落在本页）时补载
   if (auth.user && !coupleStore.context) {
     try {
@@ -388,6 +408,7 @@ onMounted(async () => {
                   :todo="todo"
                   :assignee="assigneeOf(todo)"
                   :completing="completingIds.has(todo.id)"
+                  :timezone="timezone"
                   @toggle="toggle(todo)"
                   @edit="openEdit(todo)"
                   @remove="remove(todo.id)"
@@ -412,6 +433,7 @@ onMounted(async () => {
                 :todo="todo"
                 :assignee="assigneeOf(todo)"
                 :completing="completingIds.has(todo.id)"
+                :timezone="timezone"
                 @toggle="toggle(todo)"
                 @edit="openEdit(todo)"
                 @remove="remove(todo.id)"
@@ -494,6 +516,7 @@ onMounted(async () => {
       :open="sheetOpen"
       :editing="editing"
       :editing-assignee="editingAssignee"
+      :timezone="timezone"
       @close="sheetOpen = false"
       @submit="onSubmit"
     />

@@ -14,7 +14,7 @@ import {
 } from '@/services/periodService';
 import type { PeriodLogInput } from '@/services/periodService';
 import { buildCycleModel } from '@/composables/usePeriodCalculator';
-import { todayInTimezone } from '@/utils/date';
+import { DEFAULT_TIMEZONE, todayInTimezone } from '@/utils/date';
 
 /**
  * usePeriod — 生理期模块业务逻辑层
@@ -26,6 +26,7 @@ import { todayInTimezone } from '@/utils/date';
 export function usePeriod(
   periodOwnerId: Ref<string | null>,
   isPartnerView: Ref<boolean>,
+  timezone: Ref<string> = ref(DEFAULT_TIMEZONE),
 ) {
   const cycles = ref<PeriodCycle[]>([]);
   // PeriodLog.symptoms 为递归 Json 类型，深响应解包会导致 TS2589；
@@ -35,7 +36,7 @@ export function usePeriod(
   const errorToast = ref<string | null>(null);
 
   const isMock = computed(() => periodOwnerId.value === null);
-  const today = computed(() => todayInTimezone('Asia/Shanghai'));
+  const today = computed(() => todayInTimezone(timezone.value));
 
   const model = computed(() => buildCycleModel(cycles.value, today.value));
   const ongoingCycle = computed(

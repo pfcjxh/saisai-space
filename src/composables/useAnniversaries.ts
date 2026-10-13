@@ -14,7 +14,7 @@ import type {
   UpdateAnniversaryInput,
 } from '@/services/anniversaryService';
 import { nextOccurrence } from '@/utils/lunar';
-import { todayInTimezone } from '@/utils/date';
+import { DEFAULT_TIMEZONE, todayInTimezone } from '@/utils/date';
 
 /**
  * useAnniversaries — 纪念日业务逻辑层
@@ -33,13 +33,17 @@ export interface AnniversaryView extends Anniversary {
   occurrenceDaysLeft: number;
 }
 
-export function useAnniversaries(coupleId: Ref<string | null>, myUserId: Ref<string | null>) {
+export function useAnniversaries(
+  coupleId: Ref<string | null>,
+  myUserId: Ref<string | null>,
+  timezone: Ref<string> = ref(DEFAULT_TIMEZONE),
+) {
   const items = ref<Anniversary[]>([]);
   const loading = ref(false);
   const errorToast = ref<string | null>(null);
 
   const isMock = computed(() => coupleId.value === null);
-  const today = computed(() => todayInTimezone('Asia/Shanghai'));
+  const today = computed(() => todayInTimezone(timezone.value));
 
   let toastTimer: number | undefined;
   function showToast(message: string): void {

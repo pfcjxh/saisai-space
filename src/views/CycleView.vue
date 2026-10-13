@@ -16,8 +16,8 @@ import type { CycleFormPayload } from '@/components/period/CycleFormSheet.vue';
 import { usePeriod } from '@/composables/usePeriod';
 import { fetchCoupleContext } from '@/services/coupleService';
 import { fetchProfile } from '@/services/profileService';
-import { daysBetween } from '@/utils/date';
-import type { Gender, PeriodCycle, Profile } from '@/types/database';
+import { DEFAULT_TIMEZONE, daysBetween } from '@/utils/date';
+import type { PeriodCycle, Profile } from '@/types/database';
 
 defineOptions({ name: 'CycleView' });
 
@@ -29,11 +29,24 @@ const coupleStore = useCoupleStore();
 const myProfile = ref<Profile | null>(null);
 const partnerProfile = ref<Profile | null>(null);
 
-/** 男性伴侣视角：仅阶段估算 + 关怀提示，无任何打卡入口 */
-const isPartnerView = computed(() => {
-  const gender: Gender | null = myProfile.value?.gender ?? 'male'; // Mock 默认男方视角
-  return gender === 'male';
-});
+/**
+ * 用户时区（决定「今天」与周期推算的基准日）。
+ * 修复：本页原先把 'Asia/Shanghai' 写死在 usePeriod 内部，profile.timezone
+ * 字段形同虚设，跨时区用户会算错「经期第几天 / 还有几天」。
+ */
+const timezone = computed(() => myProfile.value?.timezone ?? DEFAULT_TIMEZONE);
+
+/**
+ * 男性伴侣视角：仅阶段估算 + 关怀提示，无任何打卡入口。
+ *
+ * 修复：原实现为 `myProfile?.gender ?? 'male'`，即资料未加载（或未登录）时
+ * **默认按男方视角**。女性用户首屏会先看到「伴侣关怀模式」且 periodOwnerId
+ * 短暂指向伴侣；未登录访客同理。现改为三态：
+ *   已明确 female → 本人视角；已明确 male → 伴侣视角；
+ *   未知（资料未加载 / 未登录）→ 按本人视角，宁可先显示自己的空状态，
+ *   也不要替用户假定性别（伴侣视角还会触发「读伴侣数据」的语义）。
+ */
+const isPartnerView = computed(() => myProfile.value?.gender === 'male');
 
 /** 数据归属人：伴侣视角读她的周期统计，本人视角读自己 */
 const periodOwnerId = computed(() => {
@@ -59,7 +72,7 @@ const {
   logFor,
   saveLog,
   removeLog,
-} = usePeriod(periodOwnerId, isPartnerView);
+} = usePeriod(periodOwnerId, isPartnerView, timezone);
 
 // ---------------------------------------------------------------- 视图状态
 
