@@ -4,6 +4,7 @@ import App from './App.vue';
 import { router } from './router';
 import { useAppStore } from './stores/app';
 import { initTheme } from '@/composables/useTheme';
+import { reportError } from '@/utils/errors';
 import './styles/main.css';
 
 const app = createApp(App);
@@ -11,6 +12,42 @@ const pinia = createPinia();
 
 app.use(pinia);
 app.use(router);
+
+// ---------------------------------------------------------------- 全局错误兜底
+// 三层覆盖：Vue 内部（渲染/事件/生命周期/watch）→ 路由懒加载 → 浏览器全局。
+// 此前项目没有任何兜底，任何一个未捕获异常都会静默失败且无从排查。
+
+app.config.errorHandler = (err, _instance, info) => {
+  reportError(err, { operation: `vue:${info}` });
+};
+
+// Vue 默认在生产环境只打 console 不抛出，错误监控因此收不到线上错误
+app.config.throwUnhandledErrorInProduction = true;
+
+window.addEventListener('error', (event) => {
+  reportError(event.error ?? event.message, { operation: 'window.error' });
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  reportError(event.reason, { operation: 'window.unhandledrejection' });
+});
+
+// 部署后旧页面去 import 已被删除的 chunk 会 404（Vite 官方推荐的处置方式）。
+// 加 sessionStorage 标志防 reload 循环：只在一次会话里自动重载一次。
+window.addEventListener('vite:preloadError', (event) => {
+  reportError(event.payload, { operation: 'vite:preloadError' });
+  const KEY = 'saisai:preload-reloaded';
+  if (sessionStorage.getItem(KEY)) return;
+  sessionStorage.setItem(KEY, '1');
+  window.location.reload();
+});
+
+// 路由懒加载失败（同样常见于部署切换瞬间）
+router.onError((err) => {
+  reportError(err, { operation: 'router' });
+});
+
+// ---------------------------------------------------------------- 启动
 
 useAppStore().bindNetworkListeners();
 

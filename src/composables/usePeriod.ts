@@ -75,7 +75,11 @@ export function usePeriod(
         logs: partnerView ? [] : await listRecentLogs(ownerId),
       }));
       cycles.value = result.data.cycles;
-      logs.value = result.data.logs;
+      // 隐私红线（修复）：快照回退路径必须**重新应用**伴侣视角过滤。
+      // 原实现直接信任 result.data.logs —— 若本机缓存里有本人时期的打卡明细，
+      // 伴侣视角命中快照时会把私密打卡渲染出来，绕过"伴侣绝不查询 period_logs"
+      // 的设计。这里不信任任何来源的数据，一律按当前视角裁决。
+      logs.value = partnerView ? [] : result.data.logs;
     } catch {
       const mock = buildPeriodMock();
       cycles.value = mock.cycles;
