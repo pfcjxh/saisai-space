@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { Component } from 'vue';
-import { Cake, Coffee, Flag, Heart, Pencil, Pin, Trash2 } from '@lucide/vue';
+import { Cake, Coffee, Flag, Heart, MoreVertical, Pencil, Pin, Trash2 } from '@lucide/vue';
 import IconTile from '@/components/common/IconTile.vue';
 import type { IconTileTone } from '@/components/common/IconTile.vue';
+import InlineConfirm from '@/components/common/InlineConfirm.vue';
 import { useSwipeActions } from '@/composables/useSwipeActions';
 import type { AnniversaryCategory } from '@/types/database';
 import type { AnniversaryView } from '@/composables/useAnniversaries';
@@ -60,17 +61,37 @@ const daysDisplay = computed(() => {
 const {
   offsetX,
   settling,
+  isOpen,
   close: closeActions,
+  open: openActions,
   handlers: swipeHandlers,
 } = useSwipeActions({ actionWidth: 144, snapThreshold: 70 });
+
+/** 常显「⋮」：展开/收起同一操作层（电脑端鼠标点得到，手机端也省一次左滑） */
+function toggleActions(): void {
+  if (isOpen.value) closeActions();
+  else openActions();
+}
 
 function onEdit(): void {
   closeActions();
   emit('edit');
 }
 
-function onRemove(): void {
+// 删除二次确认：此前点下去即真删，误触无挽回余地
+const confirmingRemove = ref(false);
+
+function requestRemove(): void {
   closeActions();
+  confirmingRemove.value = true;
+}
+
+function cancelRemove(): void {
+  confirmingRemove.value = false;
+}
+
+function confirmRemove(): void {
+  confirmingRemove.value = false;
   emit('remove');
 }
 </script>
@@ -91,7 +112,7 @@ function onRemove(): void {
         type="button"
         class="flex flex-1 items-center justify-center bg-red-500/15 text-red-400"
         aria-label="删除"
-        @click="onRemove"
+        @click="requestRemove"
       >
         <Trash2 :size="17" :stroke-width="2" />
       </button>
@@ -136,6 +157,24 @@ function onRemove(): void {
           <p class="mt-1 text-[10px] text-fg-soft">{{ daysDisplay.label }}</p>
         </template>
       </div>
+
+      <!-- 常显操作入口：不依赖左滑，桌面与手机都能直接点开编辑/删除 -->
+      <button
+        type="button"
+        class="flex size-8 shrink-0 items-center justify-center rounded-full bg-card-2 text-fg-soft transition-colors active:bg-card"
+        :aria-label="isOpen ? '收起操作' : '更多操作'"
+        :aria-expanded="isOpen"
+        @click.stop="toggleActions"
+      >
+        <MoreVertical :size="15" />
+      </button>
     </div>
+
+    <InlineConfirm
+      v-if="confirmingRemove"
+      message="删除这条纪念日？"
+      @cancel="cancelRemove"
+      @confirm="confirmRemove"
+    />
   </div>
 </template>
