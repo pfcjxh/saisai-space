@@ -14,6 +14,7 @@ import type { PeriodLogFormPayload } from '@/components/period/PeriodLogSheet.vu
 import CycleFormSheet from '@/components/period/CycleFormSheet.vue';
 import type { CycleFormPayload } from '@/components/period/CycleFormSheet.vue';
 import { usePeriod } from '@/composables/usePeriod';
+import { usePeriodRealtime } from '@/composables/usePeriodRealtime';
 import { fetchCoupleContext } from '@/services/coupleService';
 import { fetchProfile } from '@/services/profileService';
 import { DEFAULT_TIMEZONE, daysBetween } from '@/utils/date';
@@ -76,7 +77,17 @@ const {
   logFor,
   saveLog,
   removeLog,
+  applyRemoteCycle,
+  removeRemoteCycle,
 } = usePeriod(periodOwnerId, isPartnerView, timezone, myUserId);
+
+// 周期实时同步（0013 把 period_cycles 加入 supabase_realtime 后启用）：
+// 他代录后她打开 App 立即看到，无需下拉；自己另一台设备的写回环由
+// applyRemoteCycle 的按 id 幂等 upsert 天然吸收。
+usePeriodRealtime(periodOwnerId, {
+  onCycleUpsert: applyRemoteCycle,
+  onCycleDelete: removeRemoteCycle,
+});
 
 /** 是否处于代录状态（伴侣视角且有明确归属人） */
 const isProxyRecording = computed(() => isPartnerView.value && periodOwnerId.value !== null);

@@ -9,6 +9,7 @@ import PeriodCareCard from '@/components/dashboard/PeriodCareCard.vue';
 import WeatherCard from '@/components/dashboard/WeatherCard.vue';
 import UpcomingMilestoneCard from '@/components/dashboard/UpcomingMilestoneCard.vue';
 import MoodPickerSheet from '@/components/dashboard/MoodPickerSheet.vue';
+import PushEnableBanner from '@/components/dashboard/PushEnableBanner.vue';
 import ThemeSettingSheet from '@/components/settings/ThemeSettingSheet.vue';
 import ShareCardSheet from '@/components/dashboard/ShareCardSheet.vue';
 import { fetchProfile, updateMood } from '@/services/profileService';
@@ -213,6 +214,9 @@ onMounted(loadDashboard);
         @open-theme="themeOpen = true"
         @open-share-card="shareOpen = true"
       />
+
+      <!-- 推送开启引导（未绑定终端时出现；订阅成功或稍后 7 天内不再打扰） -->
+      <PushEnableBanner />
 
       <!-- 聚焦卡片流：天气 → 里程碑 → 生理期 -->
       <WeatherCard

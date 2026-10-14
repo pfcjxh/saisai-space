@@ -4,6 +4,7 @@ import type { PeriodCycle, PeriodLog } from '@/types/database';
 import { buildPeriodMock } from '@/mocks/periodMock';
 import { networkFirst } from '@/services/offlineStorage';
 import {
+  createCycle,
   deleteCycle,
   deleteLog,
   listRecentCycles,
@@ -182,13 +183,9 @@ export function usePeriod(
         const updated = await updateCycle(id, patch);
         cycles.value = cycles.value.map((c) => (c.id === id ? updated : c));
       } else {
-        const created = await startCycle(periodOwnerId.value, patch.start_date);
-        if (patch.end_date) {
-          const closed = await updateCycle(created.id, { end_date: patch.end_date });
-          cycles.value = [closed, ...cycles.value];
-        } else {
-          cycles.value = [created, ...cycles.value];
-        }
+        // 单条 INSERT 一次成型（含补录闭合）：避免「先开后关」双事件推送
+        const created = await createCycle(periodOwnerId.value, patch.start_date, patch.end_date);
+        cycles.value = [created, ...cycles.value];
       }
       return true;
     } catch {
@@ -254,6 +251,29 @@ export function usePeriod(
     }
   }
 
+  // ---------------------------------------------------------------- Realtime 合并
+  // 伴侣（或本人另一台设备）的周期变更经 supabase_realtime 推来后，
+  // 由这些函数幂等地并入本地列表，不重新走网络。归属判定已在 RLS 层完成
+  // （period_cycles 对伴侣全量可见），此处只管「按 id 增/改/删」。
+
+  /** 插入或覆盖一条周期（按 id 去重；维持列表 start_date 新→旧的既有约定） */
+  function applyRemoteCycle(row: PeriodCycle): void {
+    const idx = cycles.value.findIndex((c) => c.id === row.id);
+    if (idx !== -1) {
+      cycles.value = cycles.value.map((c) => (c.id === row.id ? row : c));
+      return;
+    }
+    // 找到第一个 start_date 比新记录旧的插入点（保持新→旧）
+    const insertAt = cycles.value.findIndex((c) => c.start_date < row.start_date);
+    const next = [...cycles.value];
+    next.splice(insertAt === -1 ? next.length : insertAt, 0, row);
+    cycles.value = next;
+  }
+
+  function removeRemoteCycle(id: string): void {
+    cycles.value = cycles.value.filter((c) => c.id !== id);
+  }
+
   return {
     cycles,
     logs,
@@ -272,5 +292,7 @@ export function usePeriod(
     logFor,
     saveLog,
     removeLog,
+    applyRemoteCycle,
+    removeRemoteCycle,
   };
 }

@@ -28,14 +28,29 @@ export async function listRecentCycles(userId: string, limit = 12): Promise<Peri
   return data ?? [];
 }
 
-export async function startCycle(userId: string, startDate: string): Promise<PeriodCycle> {
+/**
+ * 新建周期记录（单条 INSERT）。
+ * endDate 传入即闭合（补录历史），为 null 即进行中（经期来了）。
+ * 一次写入而非「先 INSERT 再 PATCH」：0013 推送触发器依赖此语义——
+ * 补录闭合周期只走 INSERT 且 end_date 非空，不产生「来了/结束」双重推送。
+ */
+export async function createCycle(
+  userId: string,
+  startDate: string,
+  endDate: string | null = null,
+): Promise<PeriodCycle> {
   const { data, error } = await supabase
     .from('period_cycles')
-    .insert({ user_id: userId, start_date: startDate, end_date: null })
+    .insert({ user_id: userId, start_date: startDate, end_date: endDate })
     .select()
     .single();
   if (error) throw error;
   return data;
+}
+
+/** 兼容旧调用：进行中周期 = createCycle 无结束日 */
+export async function startCycle(userId: string, startDate: string): Promise<PeriodCycle> {
+  return createCycle(userId, startDate, null);
 }
 
 export async function updateCycle(
