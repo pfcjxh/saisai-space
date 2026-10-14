@@ -161,25 +161,33 @@ Deno.serve(async (req) => {
     // 进行中的经期不预警
     if (!latest.end_date) continue;
 
-    // 加权均值（与前端同构）：相邻开始日间隔，最近权重最高
+    // 与前端 periodForecast 引擎同构：稳健中位数 + 贝叶斯收缩。
+    // 为什么不用加权均值（旧实现）：周期长度分布右偏长尾，均值会被偶发长周期
+    // 与误录短周期带偏——真实事故是一条误录的 17 天把平均值从 28 拉到 17，
+    // 导致推送提醒提前十来天发出。中位数崩点 50%，且先验收缩让样本少时保守。
     const intervals: number[] = [];
-    for (let i = 0; i < cycles.length - 1 && intervals.length < 5; i++) {
+    for (let i = 0; i < cycles.length - 1 && intervals.length < 6; i++) {
       const curr = cycles[i];
       const prev = cycles[i + 1];
       if (!curr || !prev) continue;
       const gap = daysBetween(prev.start_date, curr.start_date);
-      if (gap >= 15 && gap <= 90) intervals.push(gap);
+      // 生理可接受范围：超出视为录入错误/异常周期，不参与点估计
+      if (gap >= 18 && gap <= 60) intervals.push(gap);
     }
-    let avgCycle = 28;
+    const PRIOR_CYCLE_MEAN = 29; // 育龄女性周期中位数约 28~29 天
+    const PRIOR_STRENGTH = 2; // 先验强度 κ：等价 2 个观测
+    let avgCycle = PRIOR_CYCLE_MEAN;
     if (intervals.length > 0) {
-      let sum = 0;
-      let wsum = 0;
-      intervals.forEach((v, i) => {
-        const w = intervals.length - i;
-        sum += v * w;
-        wsum += w;
-      });
-      avgCycle = Math.min(90, Math.max(15, Math.round(sum / wsum)));
+      const sortedAsc = [...intervals].sort((a, b) => a - b);
+      const mid = Math.floor(sortedAsc.length / 2);
+      const median =
+        sortedAsc.length % 2 === 0
+          ? ((sortedAsc[mid - 1] ?? PRIOR_CYCLE_MEAN) + (sortedAsc[mid] ?? PRIOR_CYCLE_MEAN)) / 2
+          : (sortedAsc[mid] ?? PRIOR_CYCLE_MEAN);
+      const shrunk =
+        (intervals.length * median + PRIOR_STRENGTH * PRIOR_CYCLE_MEAN) /
+        (intervals.length + PRIOR_STRENGTH);
+      avgCycle = Math.min(90, Math.max(15, Math.round(shrunk)));
     }
 
     const predictedNext = addDays(latest.start_date, avgCycle);

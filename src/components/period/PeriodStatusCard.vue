@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import AppBadge from '@/components/common/AppBadge.vue';
 import type { CycleModel } from '@/composables/usePeriodCalculator';
 import { addDays, formatDateWithWeekday, formatMonthDay } from '@/utils/date';
 
@@ -49,9 +50,22 @@ const prediction = computed(() => {
 /** 波动提示：数据不足或波动大时明确告知不确定性 */
 const volatilityNote = computed(() => {
   const i = props.model.insight;
-  if (!i.hasData || i.usesDefaultAverages) return null;
+  if (!i.hasData) return null;
+  // ACOG：波动 > 8 天属不规律，此时宁可说"仅供参考"也不假装精确
+  if (i.isIrregular) return '周期波动较大（医学上属不规律），预测仅供参考';
+  if (i.usesDefaultAverages) return '还在学习你的周期，先按通用平均值推算';
   if (i.predictedWindowDays >= 4) return '周期波动较大，预测以区间为准';
   return null;
+});
+
+/** 可信度徽标：把「预测有多准」摆在明面上，避免过自信 */
+const confidenceMeta = computed(() => {
+  const i = props.model.insight;
+  if (!i.hasData) return null;
+  if (i.isIrregular) return { label: '不规律', tone: 'amber' as const };
+  if (i.confidence === 'high') return { label: '较准', tone: 'serene' as const };
+  if (i.confidence === 'medium') return { label: '一般', tone: 'neutral' as const };
+  return { label: '学习中', tone: 'neutral' as const };
 });
 
 /** 均值说明行 */
@@ -84,7 +98,12 @@ const LEGEND = [
       今天 · {{ formatDateWithWeekday(today) }}
     </p>
 
-    <p class="mt-2 text-2xl font-bold tabular-nums">{{ headline }}</p>
+    <div class="flex items-start justify-between gap-2">
+      <p class="mt-2 text-2xl font-bold tabular-nums">{{ headline }}</p>
+      <AppBadge v-if="confidenceMeta" :tone="confidenceMeta.tone" class="mt-3 shrink-0">
+        {{ confidenceMeta.label }}
+      </AppBadge>
+    </div>
 
     <p v-if="prediction" class="mt-1.5 text-xs text-fg-soft tabular-nums">
       {{ prediction }}
@@ -94,6 +113,12 @@ const LEGEND = [
     </p>
     <p v-if="model.insight.hasData" class="mt-1 text-xs text-fg-soft tabular-nums">
       {{ averagesLine }}
+    </p>
+    <p
+      v-if="model.insight.hasData && model.insight.methodLabel"
+      class="mt-0.5 text-[10px] text-fg-mute"
+    >
+      {{ model.insight.methodLabel }}
     </p>
 
     <template v-if="model.insight.hasData">

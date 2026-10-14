@@ -11,7 +11,9 @@
     "preview": "vite preview",
     "icons": "node scripts/generate-icons.mjs",
     "test:date": "node --experimental-strip-types tests/date-timezone.check.ts",
-    "test:date:all-tz": "node scripts/run-date-tests.mjs"
+    "test:date:all-tz": "node scripts/run-date-tests.mjs",
+    "test:period": "node --experimental-strip-types --import ./tests/register-hooks.mjs tests/period-forecast.check.ts",
+    "test:weather": "node --experimental-strip-types tests/weather-haiyang.check.ts"
   },
   "dependencies": {
     "@lucide/vue": "^1.46.0",
